@@ -531,7 +531,7 @@ Relationships:
 
 ---
 
-## 4. Open Questions & Design Decisions
+## 4. Design Decisions
 
 ### 4.1 Identity Resolution
 **Question**: How to unify identities across systems?

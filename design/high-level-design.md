@@ -623,7 +623,48 @@ CREATE TABLE identity_mappings (
 **Question**: Real-time vs batch updates?
 - Real-time: Webhooks from GitHub/Jira
 - Batch: Periodic polling (easier to start)
-- **Recommendation**: Start with batch (hourly/daily), add webhooks later
+
+**Decision**: Batch Update Approach
+
+**Rationale**: 
+In real-life scenarios, project updates and changes are not sufficiently meaningful for decision-making when captured in real-time. Leadership decisions on resource allocation, project priorities, and team adjustments are typically made on a weekly cadence during planning meetings and sprint reviews. Even a daily data refresh provides more than adequate freshness for these decision-making processes.
+
+**Key Considerations**:
+- **Decision Frequency**: Strategic and tactical decisions happen weekly (sprint planning, status reviews)
+- **Data Stability**: Daily batch ensures consistent snapshots without mid-day fluctuations
+- **System Simplicity**: Avoids complexity of webhook infrastructure, event queues, and real-time processing
+- **API Rate Limits**: Batch updates are more predictable and easier to manage within API quotas
+- **Data Quality**: Batch processing allows for validation and enrichment before graph updates
+- **Cost Efficiency**: Lower infrastructure costs compared to real-time event processing
+
+**Implementation**:
+- **Frequency**: Daily batch runs (e.g., 2 AM local time)
+- **Incremental Updates**: Only fetch changes since last sync (using timestamps/cursors)
+- **Prioritization**: 
+  - Critical systems (GitHub, Jira): Daily
+  - Secondary systems (Confluence, AWS): Every 2-3 days initially
+- **Manual Refresh**: On-demand refresh capability for urgent needs
+- **Monitoring**: Track sync status, data lag, and failure alerts
+
+**Future Enhancement**:
+If real-time updates become necessary (e.g., incident response dashboards), webhooks can be added selectively for high-priority event types without re-architecting the entire system.
+
+**Batch Schedule**:
+```yaml
+Daily (2:00 AM):
+  - GitHub: commits, PRs, branches (last 24 hours)
+  - Jira: issue updates, sprint changes (last 24 hours)
+  - Person: new/updated users across all systems
+
+Every 3 Days:
+  - GitHub: repository metadata, team memberships
+  - Jira: project/board configurations
+  
+Weekly:
+  - Confluence: page updates, space changes
+  - AWS: infrastructure changes
+  - Full reconciliation and cleanup
+```
 
 ### 4.3 Graph Database Selection
 **Question**: Which graph database?

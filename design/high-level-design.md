@@ -703,14 +703,131 @@ Weekly:
 **Question**: What scale are we targeting?
 - Typical enterprise: 100s of repos, 1000s of people, 100Ks of commits
 - Need to estimate node/edge counts
-- **TODO**: Calculate expected graph size
+
+**Target Organization Profile**:
+- **Size**: Large organizations
+- **Repositories**: 10-99 (average) to few thousands (max)
+- **Employee Count**: ~500 (average) to few thousands (max)
+- **Historical Data**: 5+ years of Confluence and Jira activity
+- **Rationale**: New orgs don't need sophisticated analytics; mature orgs with history benefit most
+
+**Estimated Graph Size (Average Organization)**:
+
+**Nodes**:
+```
+People & Organization:
+  - Person: 500
+  - Team: 50
+  - Organization/Department: 10
+  Total: 560
+
+Source Control (50 repos, 5 years):
+  - Repository: 50
+  - Branch: 200 (4 per repo avg)
+  - Commit: 250,000 (100 commits/repo/year)
+  - PullRequest: 25,000 (10 PRs/repo/year)
+  - File: 50,000 (1,000 files/repo avg)
+  - Directory: 5,000
+  Total: 330,250
+
+Issue Tracking (5 years):
+  - Project: 20
+  - Board: 30
+  - Epic: 500
+  - Issue: 50,000 (10,000/year)
+  - Sprint: 250 (52/year)
+  Total: 50,800
+
+Identity:
+  - IdentityMapping: 2,500 (5 systems × 500 people)
+
+Documentation (5 years):
+  - Space: 30
+  - Page: 10,000 (2,000/year)
+  Total: 10,030
+
+Grand Total Nodes: ~393,640
+```
+
+**Edges/Relationships**:
+```
+Estimated: 5-10× node count = 2-4 million edges
+
+Key relationships:
+  - Commit → Person (AUTHORED_BY): 250K
+  - Commit → File (MODIFIES): 1M (4 files per commit avg)
+  - Issue → Person (ASSIGNED_TO): 50K
+  - Person → Team (MEMBER_OF): 500
+  - Issue → Commit (FIXED_IN): 100K
+  - PullRequest → Commit (HAS_COMMIT): 150K
+  - ... and many more
+```
+
+**Storage Estimates**:
+- **Nodes**: ~400K × 1KB avg = 400 MB
+- **Relationships**: ~3M × 500 bytes avg = 1.5 GB
+- **Total Database Size**: ~5-10 GB (with indexes)
+- **Neo4j Instance**: 8-16 GB RAM, 50 GB disk sufficient
+
+**Large Organization (Maximum Scale)**:
+- Repositories: 2,000
+- Employees: 3,000
+- Nodes: ~15M
+- Edges: ~100M
+- Database Size: ~200-300 GB
+- Neo4j Instance: 64-128 GB RAM, 1 TB disk
+
+**Scalability Considerations**:
+- Neo4j Community Edition handles up to 34 billion nodes
+- Average organization well within comfortable limits
+- Even maximum scale manageable with Enterprise Edition
+- Query performance depends on index design and query patterns
+- Consider time-based partitioning for >10 year historical data
 
 ### 4.6 Privacy & Security
 **Question**: What data should NOT be stored?
 - Sensitive code content
 - Personal information beyond work profile
 - Private messages/comments?
-- **TODO**: Define data retention and privacy policy
+
+**Current Approach**: Organization-Hosted Deployment Model
+
+**Decision**: 
+Privacy and security requirements will be addressed with finer details after achieving a successful product. For the initial phase, the deployment model simplifies many privacy concerns:
+
+**Deployment Constraints**:
+- **On-Premise/Org-Hosted Only**: Database remains within organization boundaries
+- **No SaaS Model**: Deliberately avoiding multi-tenant SaaS to eliminate cross-organization data privacy complexities
+- **Customer-Controlled**: Each organization manages their own infrastructure and data
+- **Network Isolation**: Graph database accessible only within organization's network/VPN
+
+**Implications**:
+- **Data Sovereignty**: Organization controls where data lives (their cloud account or data center)
+- **Compliance**: Organization's existing compliance policies apply (GDPR, SOC2, etc.)
+- **Access Control**: Managed through organization's existing identity provider (SSO/SAML)
+- **Data Retention**: Organization decides retention policies
+- **Audit Logs**: Stored within organization's systems
+
+**Basic Privacy Guidelines (Initial Phase)**:
+- **Store**: Metadata, relationships, metrics, timestamps, public work artifacts
+- **Store with caution**: Issue descriptions, PR comments, commit messages (useful for context)
+- **Do NOT store**: 
+  - Actual source code content (only file paths and metadata)
+  - Personal contact info beyond work email
+  - Private messages between individuals
+  - Credentials, tokens, secrets
+  - Sensitive business data in raw form
+
+**Future Considerations**:
+If SaaS model becomes necessary:
+- End-to-end encryption for sensitive fields
+- Detailed data classification and retention policies
+- GDPR/CCPA compliance framework
+- Right to deletion and data portability
+- Security certifications (SOC2, ISO 27001)
+- Multi-tenant isolation guarantees
+
+**Current Priority**: Focus on value delivery; leverage customer's existing security infrastructure rather than building comprehensive data protection layer prematurely.
 
 ### 4.7 Deleted Entities
 **Question**: How to handle deletions?

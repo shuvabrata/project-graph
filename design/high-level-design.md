@@ -910,7 +910,119 @@ RETURN r.name, r.deleted_at
 - Examples: code churn, velocity, centrality scores
 - Pre-compute: Faster queries, staleness risk
 - On-demand: Always fresh, slower
-- **Recommendation**: Pre-compute and cache hot metrics
+
+**Decision**: Hybrid Approach Based on Use Case
+
+**Strategy**:
+The approach depends on the specific metric and its usage patterns. Some metrics can be pre-computed during data ingestion, while others require scheduled analytics pipelines to compute periodically.
+
+**Category 1: Pre-Computed Metrics (During Ingestion)**
+Calculated as data arrives and stored as node properties:
+```yaml
+Examples:
+  - Commit counts per person
+  - File modification counts
+  - PR review counts
+  - Issue resolution times (when closed)
+  - Lines added/deleted aggregates
+  
+Characteristics:
+  - Simple aggregations
+  - Derived from single data source
+  - Frequently accessed in queries
+  - Low computational cost
+  - Stored as node properties
+```
+
+**Category 2: Scheduled Analytics Pipelines**
+Computed by periodic batch jobs (daily/weekly):
+```yaml
+Examples:
+  - Code hotspot scores (churn × authors × bugs)
+  - Team velocity trends (requires multi-sprint history)
+  - Graph centrality metrics (PageRank, betweenness)
+  - Skill coverage analysis (person-project matching)
+  - Dependency risk scores (cross-team coupling)
+  - Knowledge silo detection (bus factor calculations)
+  
+Characteristics:
+  - Complex graph algorithms
+  - Require traversing large portions of graph
+  - Updated less frequently (daily/weekly acceptable)
+  - Computationally expensive
+  - May create derived nodes or properties
+```
+
+**Category 3: On-Demand Computation**
+Calculated at query time:
+```yaml
+Examples:
+  - Specific date range analysis (custom timeframe)
+  - Ad-hoc relationship traversals
+  - Drill-down queries for specific entities
+  - Real-time filters and aggregations
+  
+Characteristics:
+  - User-specific queries
+  - Variable parameters
+  - Not reusable across users
+  - Interactive response time acceptable (1-5s)
+```
+
+**Implementation Architecture**:
+
+```yaml
+Ingestion Pipeline:
+  - Calculate simple metrics (counts, sums, averages)
+  - Store as node properties
+  - Update incrementally with each batch
+
+Analytics Pipeline (Scheduled):
+  - Runs daily at 3 AM (after data ingestion at 2 AM)
+  - Computes complex metrics using Neo4j Graph Data Science library
+  - Stores results as:
+    - Node properties (scores, rankings)
+    - Derived relationship properties (weights, strengths)
+    - Separate metric nodes for time-series tracking
+  - Parallelizable for large graphs
+
+Query Layer:
+  - Reads pre-computed metrics for dashboard views
+  - Combines cached metrics with on-demand filters
+  - Triggers background refresh if metrics stale
+```
+
+**Metric Storage Example**:
+```cypher
+// Pre-computed property
+(file:File {
+  path: "src/main.py",
+  commit_count: 145,
+  author_count: 8,
+  last_hotspot_score: 0.82,
+  score_computed_at: datetime('2026-01-04T03:00:00Z')
+})
+
+// Time-series metric node
+(metric:Metric {
+  entity_id: "file:src/main.py",
+  metric_type: "hotspot_score",
+  value: 0.82,
+  computed_at: datetime('2026-01-04T03:00:00Z')
+})
+```
+
+**Caching Strategy**:
+- Dashboard queries use pre-computed metrics
+- Cache TTL: 24 hours (refreshed nightly)
+- Stale indicator if >48 hours old
+- Manual refresh option for critical analysis
+
+**Benefits**:
+- Balance between performance and freshness
+- Flexibility for different query patterns
+- Optimize infrastructure costs
+- Support both routine dashboards and ad-hoc analysis
 
 ---
 

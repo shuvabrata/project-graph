@@ -833,7 +833,77 @@ If SaaS model becomes necessary:
 **Question**: How to handle deletions?
 - Soft delete (is_deleted flag) vs hard delete
 - Important for historical queries
-- **Recommendation**: Soft delete for critical entities
+
+**Decision**: Immutable Database with Snapshot-Based Model
+
+**Approach**:
+The database will be **immutable in nature** as we are collecting data snapshots over time. Entities are never truly deleted; instead, we track their lifecycle through snapshots.
+
+**Rationale**:
+- **Historical Analysis**: Essential for answering "what happened" questions
+- **Trend Detection**: Compare states over time to identify patterns
+- **Audit Trail**: Complete history of all changes
+- **Regulatory Compliance**: Maintain records for required retention periods
+- **Rollback Capability**: Restore previous states if needed
+- **Analytics Accuracy**: Avoid skewing metrics by removing historical data
+
+**Implementation**:
+
+**Snapshot Properties** (added to relevant nodes):
+```yaml
+Common temporal properties:
+  - first_seen_at: timestamp (when entity first appeared)
+  - last_seen_at: timestamp (when entity last observed)
+  - is_active: boolean (present in latest snapshot)
+  - snapshot_date: date (which snapshot this data came from)
+  - deleted_at: timestamp (when marked deleted in source system)
+```
+
+**Examples**:
+
+1. **Deleted Repository**:
+   - Repository node remains in graph
+   - `is_active = false`
+   - `deleted_at = 2025-12-15`
+   - All historical commits, PRs, and relationships preserved
+
+2. **Person Leaving Organization**:
+   - Person node retained
+   - `is_active = false`
+   - `last_seen_at = 2025-11-30`
+   - All historical contributions intact for analytics
+
+3. **Closed Issue**:
+   - Issue node remains
+   - Status changes tracked via Event nodes or temporal properties
+   - Can analyze time-to-resolution, who closed it, etc.
+
+**Query Patterns**:
+```cypher
+// Only active entities (most common)
+MATCH (p:Person {is_active: true})
+
+// Historical snapshot at specific date
+MATCH (p:Person)
+WHERE p.first_seen_at <= date('2025-06-01') 
+  AND (p.last_seen_at >= date('2025-06-01') OR p.last_seen_at IS NULL)
+
+// Analyze deleted/inactive entities
+MATCH (r:Repository {is_active: false})
+WHERE r.deleted_at > date('2025-01-01')
+RETURN r.name, r.deleted_at
+```
+
+**Storage Optimization**:
+- Periodic archival of very old snapshots (>3-5 years) to separate storage if needed
+- Compression for historical data rarely accessed
+- Retain aggregated metrics even if detailed data archived
+
+**Benefits**:
+- No data loss from accidental deletions
+- Support "time travel" queries ("who was on this team 6 months ago?")
+- Understand organizational changes over time
+- Detect patterns in repository lifecycle, team churn, etc.
 
 ### 4.8 Computed Metrics
 **Question**: Store metrics in graph or compute on-demand?

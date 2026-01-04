@@ -311,19 +311,24 @@ Relationships:
 **Person**
 ```yaml
 Properties:
-  - id: string (unique across systems)
+  - id: string (master_person_id - unique across systems)
   - name: string
-  - email: string
+  - primary_email: string
+  - all_emails: string[] (all known emails)
   - github_username: string
   - jira_username: string
   - confluence_username: string
   - title: string
   - seniority: string (Junior/Mid/Senior/Staff/Principal)
   - role: string (Engineer/Manager/PM/Designer)
+  - type: string (Employee/Contractor/External/Bot)
   - hire_date: date
   - skills: string[] (programming languages, domains)
   - location: string
   - timezone: string
+  - identity_verified: boolean
+  - created_at: timestamp
+  - updated_at: timestamp
   
 Relationships:
   - MEMBER_OF → Team
@@ -336,6 +341,27 @@ Relationships:
   - OWNS → Repository/Service
   - PARTICIPATED_IN → Meeting
   - CONTRIBUTED_TO → Document (Confluence)
+  - HAS_IDENTITY → IdentityMapping (links to external systems)
+```
+
+**IdentityMapping**
+```yaml
+Properties:
+  - id: string
+  - system: string (github/jira/confluence/aws/azure)
+  - external_id: string
+  - external_username: string
+  - external_email: string
+  - match_method: string (email/manual/fuzzy)
+  - match_confidence: float (0.0-1.0)
+  - verified: boolean
+  - created_at: timestamp
+  - verified_at: timestamp
+  - verified_by: string
+  
+Relationships:
+  - MAPS_TO → Person (master identity)
+  - VERIFIED_BY → Person (admin who verified)
 ```
 
 **Team**
@@ -511,7 +537,87 @@ Relationships:
 **Question**: How to unify identities across systems?
 - GitHub user != Jira user != Confluence user
 - Need mapping table or heuristics (email matching?)
-- **TODO**: Design identity resolution strategy
+
+**Solution**: Master Identity Table with Hybrid Matching
+
+The application will maintain a master identity table that merges IDs from different systems into a single row for each unique identity.
+
+**Three-Phase Approach**:
+
+1. **Automatic Email Matching**
+   - Primary strategy: Match users across systems by email address
+   - Email is the canonical identifier when available
+   - Handles ~80-90% of cases automatically
+
+2. **Fuzzy Matching with Suggestions**
+   - For unmatched identities, apply fuzzy matching on:
+     - Name similarity (Levenshtein distance)
+     - Username patterns (e.g., john.smith vs jsmith)
+     - Domain context (same organization)
+   - Present suggestions to end users for review
+   - Confidence score threshold (e.g., >0.85 for auto-merge, 0.6-0.85 for suggestions)
+
+3. **Manual Mapping**
+   - Admin interface for manual identity linking
+   - Override automatic matches if incorrect
+   - Handle edge cases (contractors, name changes, duplicate accounts)
+   - Audit trail for manual changes
+
+**Implementation Details**:
+
+```yaml
+IdentityMapping Node:
+  Properties:
+    - master_id: string (canonical person ID)
+    - system: string (github/jira/confluence/aws)
+    - external_id: string (ID in external system)
+    - external_username: string
+    - external_email: string
+    - match_method: string (email/manual/fuzzy)
+    - match_confidence: float (0.0-1.0)
+    - verified: boolean
+    - created_at: timestamp
+    - verified_at: timestamp
+    - verified_by: string (admin user)
+  
+  Relationships:
+    - MAPS_TO → Person (master identity)
+```
+
+**Workflow**:
+1. Data ingestion extracts user info from each system
+2. Identity resolver attempts email matching first
+3. Unmatched identities go through fuzzy matching
+4. High-confidence matches (>0.85) auto-link with review flag
+5. Medium-confidence matches (0.6-0.85) queued for user approval
+6. Low-confidence matches (<0.6) remain unlinked until manual review
+7. Periodic review dashboard shows pending matches
+
+**Edge Cases**:
+- **No email available**: Use fuzzy matching + manual fallback
+- **Multiple emails**: Link all emails to same master identity
+- **Name changes**: Keep history, link to same master_id
+- **Contractors/External**: Mark as external in Person.type
+- **Bots/Service accounts**: Separate handling, exclude from analytics
+
+**Database Schema** (supporting table):
+```sql
+CREATE TABLE identity_mappings (
+  id UUID PRIMARY KEY,
+  master_person_id UUID NOT NULL,
+  system VARCHAR(50) NOT NULL,
+  external_id VARCHAR(255) NOT NULL,
+  external_username VARCHAR(255),
+  external_email VARCHAR(255),
+  match_method VARCHAR(20) NOT NULL, -- email, manual, fuzzy
+  match_confidence DECIMAL(3,2),
+  verified BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP NOT NULL,
+  verified_at TIMESTAMP,
+  verified_by VARCHAR(255),
+  UNIQUE(system, external_id)
+);
+```
 
 ### 4.2 Data Freshness
 **Question**: Real-time vs batch updates?

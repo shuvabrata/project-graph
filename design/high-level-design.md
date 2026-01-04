@@ -671,7 +671,27 @@ Weekly:
 - Neo4j: Industry standard, great for analytics
 - Amazon Neptune: If AWS-native desired
 - ArangoDB: Multi-model flexibility
-- **TODO**: Evaluate based on query patterns and scale
+
+**Decision**: Neo4j
+
+**Rationale**:
+- **Mature Ecosystem**: Industry-standard graph database with 15+ years of development
+- **Cypher Query Language**: Intuitive, SQL-like query language ideal for graph traversals
+- **Analytics Capabilities**: Native support for graph algorithms (PageRank, community detection, shortest path)
+- **Developer Experience**: Excellent documentation, large community, extensive libraries
+- **Tooling**: Built-in visualization (Neo4j Browser), monitoring, and management tools
+- **Python Integration**: Strong support via py2neo and official neo4j-driver
+- **Scale**: Proven to handle billions of nodes and relationships
+- **Flexibility**: Available as Community Edition (free) or Enterprise for production
+
+**Deployment Options**:
+- **Development**: Neo4j Community Edition (Docker container)
+- **Production**: Neo4j AuraDB (managed cloud) or self-hosted Enterprise
+- **Estimated Scale**: Mid-tier instance sufficient for typical enterprise (1M+ nodes)
+
+**Alternatives Considered**:
+- Amazon Neptune: AWS-native but less mature tooling, Gremlin/SPARQL less intuitive than Cypher
+- ArangoDB: Multi-model interesting but adds complexity, smaller community
 
 ### 4.4 Schema Evolution
 **Question**: How to handle schema changes?

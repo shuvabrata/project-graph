@@ -465,17 +465,34 @@ ORDER BY r.name
 #### Relationships
 - `PART_OF`: Commit → Branch (always to the default/main branch)
 - `AUTHORED_BY`: Commit → Person
-- `MODIFIES`: Commit → File (we'll create File nodes for key files)
+- `MODIFIES`: Commit → File (tracks all files changed in the commit)
+  - Properties: `{lines_added, lines_deleted, files_changed}`
 - `REFERENCES`: Commit → Issue (extracted from message)
 
 **Note**: We do NOT track PARENT (commit history chain). Since we only track main branch commits, the chronological order is sufficient.
 
-#### File Simulation
-Create ~50 key files across repos to track:
-- High churn files (modified frequently)
-- Files touched by many authors
-- Files linked to bugs
-- Stable files (rarely changed)
+#### File Nodes
+Track **all files** modified in commits across repositories:
+
+**File Properties**:
+- `path`: Full file path (e.g., `src/services/UserService.java`)
+- `name`: File name only (e.g., `UserService.java`)
+- `size`: File size in bytes
+- `created_at`: Timestamp when file was first created
+- `created_by`: Person who created the file (from first commit)
+
+**File Distribution** (estimated):
+- Backend services: ~100 files (.java, .py, .js files)
+- Frontend: ~80 files (.tsx, .jsx, .css files)
+- Config files: ~40 files (.yaml, .json, .env files)
+- Documentation: ~20 files (.md files)
+- Tests: ~60 files (test files)
+- **Total: ~300 File nodes**
+
+**MODIFIES Relationship Properties**:
+- `lines_added`: Number of lines added in this commit
+- `lines_deleted`: Number of lines removed in this commit
+- `files_changed`: Total number of files modified in the commit (for tracking commit size)
 
 #### Test Data Files
 - `simulation/data/layer7_commits.json`

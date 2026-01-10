@@ -434,6 +434,16 @@ ORDER BY r.name
   - Distribution: ~60 commits per week
   - Varied commit sizes (small fixes to large features)
   - All commits are on default branches (main) of their respective repositories
+
+#### Commit Properties
+```yaml
+Properties:
+  - sha: string (commit hash, unique identifier)
+  - timestamp: timestamp (when commit was created)
+  - additions: integer (total lines added across all files)
+  - deletions: integer (total lines deleted across all files)
+  - files_changed: integer (number of files modified in this commit)
+```
   
 #### Commit Patterns to Simulate
 - **By Team**:
@@ -466,11 +476,9 @@ ORDER BY r.name
 - `PART_OF`: Commit → Branch (always to the default/main branch)
 - `AUTHORED_BY`: Commit → Person
 - `MODIFIES`: Commit → File (tracks all files changed in the commit)
-  - Properties: `{lines_added, lines_deleted, files_changed}`
-- `REFERENCES`: Commit → Issue (extracted from commit message)
-  - Simple extraction: Create relationship if Jira key pattern found (e.g., PLAT-1, BUG-234)
-  - No reference type tracking (not reliably extractable)
+- `REFERENCES`: Commit → Issue (if Jira key pattern exists in commit message)
   - Distribution: 60% reference Stories, 20% reference Bugs, 20% no reference
+  - Note: Jira key extraction from messages is handled in real queries, not during data generation
 
 **Note**: We do NOT track PARENT (commit history chain). Since we only track main branch commits, the chronological order is sufficient.
 
@@ -480,6 +488,9 @@ Track **all files** modified in commits across repositories:
 **File Properties**:
 - `path`: Full file path (e.g., `src/services/UserService.java`)
 - `name`: File name only (e.g., `UserService.java`)
+- `extension`: File extension (e.g., `.java`, `.tsx`, `.py`, `.md`)
+- `language`: Programming language (e.g., `Java`, `TypeScript`, `Python`, `Markdown`)
+- `is_test`: Boolean indicating if this is a test file
 - `size`: File size in bytes
 - `created_at`: Timestamp when file was first created
 - `created_by`: Person who created the file (from first commit)
@@ -491,11 +502,6 @@ Track **all files** modified in commits across repositories:
 - Documentation: ~20 files (.md files)
 - Tests: ~60 files (test files)
 - **Total: ~300 File nodes**
-
-**MODIFIES Relationship Properties**:
-- `lines_added`: Number of lines added in this commit
-- `lines_deleted`: Number of lines removed in this commit
-- `files_changed`: Total number of files modified in the commit (for tracking commit size)
 
 #### Test Data Files
 - `simulation/data/layer7_commits.json`

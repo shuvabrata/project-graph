@@ -245,7 +245,7 @@ RETURN i.key, i.summary, i.status
 ---
 
 ### 3.5 Layer 5: Git Repositories
-**Goal**: Create repository structure aligned with teams and work
+**Goal**: Create repository structure with discoverable relationships
 
 #### Nodes to Create
 - **Repository** (8 repos):
@@ -258,28 +258,85 @@ RETURN i.key, i.summary, i.status
   - `mobile/ios-app` (Mobile Team)
   - `data/streaming-pipeline` (Data Team)
 
-#### Relationships
-- `OWNED_BY`: Repository → Team
-- `MAINTAINED_BY`: Repository → Person (tech leads)
-- `RELATES_TO`: Epic → Repository (many-to-many)
+#### Repository Properties
+```yaml
+Properties:
+  - id: string (unique)
+  - name: string (repo name only)
+  - full_name: string (org/repo)
+  - url: string (GitHub URL)
+  - language: string (primary language)
+  - is_private: boolean
+  - created_at: timestamp
+  - description: string
+  - topics: string[] (e.g., ["microservices", "api", "python"])
+```
+
+#### Relationships (Directly Discoverable)
+- `COLLABORATOR`: Person → Repository
+  - Properties: `permission` ("READ" or "WRITE")
+  - Source: GitHub collaborator API, repo settings
+  - WRITE permission includes: push, merge, admin access
+  - READ permission includes: pull, clone, view-only access
+  
+- `COLLABORATOR`: Team → Repository
+  - Properties: `permission` ("READ" or "WRITE")
+  - Source: GitHub team permissions in organization settings
+  - Team members inherit the team's permission level
+
+**Note**: Epic → Repository relationships are NOT directly discoverable. Instead, they will be **inferred** in Layer 7 through the commit chain: `Epic -[:PART_OF]-> Story -[:REFERENCES]<- Commit -[:PART_OF]-> Branch -[:BRANCH_OF]-> Repository`
+
+#### Permission Distribution Strategy
+- Each repo will have 1 team with WRITE access (owning team)
+- 2-3 people from owning team will have individual WRITE access (maintainers/tech leads)
+- 1-2 other teams may have READ access (cross-team dependencies)
+- 3-5 individuals from other teams may have READ access (occasional contributors)
 
 #### Test Data File
 - `simulation/data/layer5_repositories.json`
 
 #### Validation Queries
 ```cypher
-// Repository ownership
-MATCH (r:Repository)-[:OWNED_BY]->(t:Team)
-RETURN r.name, t.name
+// Repository collaborators by team (WRITE access)
+MATCH (t:Team)-[c:COLLABORATOR]->(r:Repository)
+WHERE c.permission = 'WRITE'
+RETURN t.name as team, collect(r.name) as repositories
+ORDER BY team
 
-// Epics mapped to repos
-MATCH (e:Epic)-[:RELATES_TO]->(r:Repository)
-RETURN e.key, e.summary, collect(r.name) as repositories
+// Repository maintainers (individuals with WRITE access)
+MATCH (p:Person)-[c:COLLABORATOR]->(r:Repository)
+WHERE c.permission = 'WRITE'
+RETURN r.name as repository, 
+       collect(p.name) as maintainers,
+       collect(p.title) as titles
+ORDER BY repository
 
-// Repos without owners (should be none)
+// Cross-team access (teams with READ permission)
+MATCH (t:Team)-[c:COLLABORATOR]->(r:Repository)
+WHERE c.permission = 'READ'
+RETURN r.name as repository, 
+       collect(t.name) as teams_with_read_access
+ORDER BY repository
+
+// People collaborating across multiple repos
+MATCH (p:Person)-[c:COLLABORATOR]->(r:Repository)
+WITH p, c.permission as perm, collect(r.name) as repos
+WHERE size(repos) > 1
+RETURN p.name, p.title, perm, repos, size(repos) as repo_count
+ORDER BY repo_count DESC, perm DESC
+
+// Repos without WRITE collaborators (should be none)
 MATCH (r:Repository)
-WHERE NOT exists((r)-[:OWNED_BY]->())
+WHERE NOT exists((r)<-[:COLLABORATOR {permission: 'WRITE'}]-())
 RETURN r.name
+
+// Permission summary per repository
+MATCH (r:Repository)<-[c:COLLABORATOR]-(collaborator)
+RETURN r.name as repository,
+       sum(CASE WHEN c.permission = 'WRITE' THEN 1 ELSE 0 END) as write_access,
+       sum(CASE WHEN c.permission = 'READ' THEN 1 ELSE 0 END) as read_access,
+       count(collaborator) as total_collaborators
+ORDER BY repository
 ```
 
 ---

@@ -534,44 +534,7 @@ Each layer is self-contained:
 
 ### 4.2 JSON Schema Design
 
-Each layer will have a consistent JSON structure:
-
-```json
-{
-  "metadata": {
-    "layer": "layer1",
-    "description": "People and Teams",
-    "generated_at": "2026-01-04T10:00:00Z",
-    "schema_version": "1.0"
-  },
-  "nodes": {
-    "Person": [
-      {
-        "id": "person_001",
-        "properties": {
-          "name": "Alice Johnson",
-          "primary_email": "alice.johnson@company.com",
-          "title": "Senior Software Engineer",
-          "seniority": "Senior",
-          "role": "Engineer",
-          "hire_date": "2022-03-15"
-        }
-      }
-    ],
-    "Team": [...]
-  },
-  "relationships": [
-    {
-      "type": "MEMBER_OF",
-      "from": {"node_type": "Person", "id": "person_001"},
-      "to": {"node_type": "Team", "id": "team_platform"},
-      "properties": {
-        "joined_at": "2022-03-15"
-      }
-    }
-  ]
-}
-```
+Each layer follows a consistent JSON structure with metadata, nodes, and relationships. The actual data structure can be seen in the generated files in `simulation/data/` directory.
 
 ### 4.3 Development Workflow
 

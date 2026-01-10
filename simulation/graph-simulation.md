@@ -427,11 +427,13 @@ ORDER BY r.name
 ### 3.7 Layer 7: Git Commits (Final Layer)
 **Goal**: Create realistic commit history with relationships to people and work items
 
+**Important**: We only track commits that made it to the **default branch** (main). Feature branch commits are not tracked - we only care about what's in production.
+
 #### Nodes to Create
 - **Commit** (~500 commits over 3 months):
   - Distribution: ~60 commits per week
   - Varied commit sizes (small fixes to large features)
-  - Mix of merge commits and regular commits
+  - All commits are on default branches (main) of their respective repositories
   
 #### Commit Patterns to Simulate
 - **By Team**:
@@ -458,14 +460,15 @@ ORDER BY r.name
 - Good messages: `[PLAT-1] Add k8s deployment configs for auth service`
 - Bug fixes: `Fix memory leak in user service (BUG-234)`
 - No reference: `Update README` (20% of commits)
-- Merge commits: `Merge pull request #42 from feature/PORT-3-api-gateway`
+- Merge commits: `Merge pull request #42 from feature/PORT-3-api-gateway` (merged to main)
 
 #### Relationships
-- `PART_OF`: Commit → Branch
+- `PART_OF`: Commit → Branch (always to the default/main branch)
 - `AUTHORED_BY`: Commit → Person
-- `PARENT`: Commit → Commit (git history)
 - `MODIFIES`: Commit → File (we'll create File nodes for key files)
 - `REFERENCES`: Commit → Issue (extracted from message)
+
+**Note**: We do NOT track PARENT (commit history chain). Since we only track main branch commits, the chronological order is sufficient.
 
 #### File Simulation
 Create ~50 key files across repos to track:
@@ -507,15 +510,13 @@ RETURN f.path,
 ORDER BY commit_count DESC, author_count DESC
 LIMIT 10
 
-// Feature branch completion
-MATCH (b:Branch)-[:BRANCH_OF]->(r:Repository)
-MATCH (b)<-[:PART_OF]-(c:Commit)
-WHERE b.name STARTS WITH 'feature/'
-RETURN b.name, 
-       r.name,
+// Commits per repository (main branch activity)
+MATCH (c:Commit)-[:PART_OF]->(b:Branch)-[:BRANCH_OF]->(r:Repository)
+WHERE b.is_default = true
+RETURN r.name, 
        count(c) as commits,
        max(c.timestamp) as last_commit
-ORDER BY last_commit DESC
+ORDER BY commits DESC
 
 // Cross-reference: Stories completed but no commits
 MATCH (story:Issue {type: 'Story', status: 'Done'})

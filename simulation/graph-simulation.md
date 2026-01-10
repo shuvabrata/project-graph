@@ -463,7 +463,6 @@ ORDER BY r.name
 #### Relationships
 - `PART_OF`: Commit → Branch
 - `AUTHORED_BY`: Commit → Person
-- `COMMITTED_BY`: Commit → Person (usually same as author)
 - `PARENT`: Commit → Commit (git history)
 - `MODIFIES`: Commit → File (we'll create File nodes for key files)
 - `REFERENCES`: Commit → Issue (extracted from message)
@@ -522,15 +521,6 @@ ORDER BY last_commit DESC
 MATCH (story:Issue {type: 'Story', status: 'Done'})
 WHERE NOT exists((story)<-[:REFERENCES]-(:Commit))
 RETURN story.key, story.summary
-
-// Identify code review patterns
-MATCH (c:Commit)-[:AUTHORED_BY]->(author:Person)
-MATCH (c)-[:COMMITTED_BY]->(committer:Person)
-WHERE author <> committer
-RETURN author.name as author, 
-       committer.name as committer, 
-       count(c) as commits
-ORDER BY commits DESC
 ```
 
 ---

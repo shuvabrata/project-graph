@@ -1,5 +1,5 @@
 # Project Graph
-![alt text](image.png)
+![alt text](image-1.png)
 
 A graph-based analytics platform that surfaces hidden data points from enterprise systems (GitHub, Jira, Confluence, Org Structure) to enable data-driven decision making for technical leaders.
 

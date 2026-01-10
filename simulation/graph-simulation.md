@@ -424,7 +424,7 @@ ORDER BY r.name
 
 ---
 
-### 3.7 Layer 7: Git Commits (Final Layer)
+### 3.7 Layer 7: Git Commits
 **Goal**: Create realistic commit history with relationships to people and work items
 
 **Important**: We only track commits that made it to the **default branch** (main). Feature branch commits are not tracked - we only care about what's in production.
@@ -546,6 +546,134 @@ RETURN story.key, story.summary
 
 ---
 
+### 3.8 Layer 8: Pull Requests (Final Layer)
+**Goal**: Create pull request workflow with reviews and approvals
+
+#### Nodes to Create
+- **PullRequest** (~100 PRs over 3 months):
+  - Distribution: ~8 PRs per week
+  - Mix of feature PRs (70%), bug fix PRs (20%), and small improvements (10%)
+  - States: merged (75%), open (15%), closed without merge (10%)
+
+#### PR Patterns to Simulate
+- **By Team**:
+  - Platform: 20 PRs (large infrastructure changes)
+  - API: 30 PRs (most active services)
+  - Frontend: 25 PRs (UI iterations)
+  - Mobile: 15 PRs (careful review process)
+  - Data: 10 PRs (complex changes)
+
+- **By Size** (commits per PR):
+  - Small: 1-3 commits (40% of PRs)
+  - Medium: 4-8 commits (40% of PRs)
+  - Large: 9-20 commits (20% of PRs)
+
+- **Review Patterns**:
+  - 90% of PRs have at least 1 reviewer
+  - 60% of PRs have 2+ reviewers
+  - Average review time: 1-3 days
+  - 80% of PRs approved before merge
+
+#### PR Properties
+```yaml
+Properties:
+  - id: string (unique)
+  - number: integer (PR number in repo)
+  - title: string
+  - description: string
+  - state: string ("open", "merged", "closed")
+  - created_at: timestamp
+  - updated_at: timestamp
+  - merged_at: timestamp (null if not merged)
+  - closed_at: timestamp (null if still open)
+  - draft: boolean (is it a draft PR)
+  - commits_count: integer
+  - additions: integer (total lines added)
+  - deletions: integer (total lines deleted)
+  - changed_files: integer
+```
+
+#### Relationships
+- `INCLUDES`: PullRequest → Commit (PR contains these commits)
+- `TARGETS`: PullRequest → Branch (base branch - always main/default)
+- `FROM`: PullRequest → Branch (source branch - feature/bugfix branch)
+- `CREATED_BY`: PullRequest → Person (PR author)
+- `REVIEWED_BY`: PullRequest → Person (reviewer, can be multiple)
+  - Properties: `{reviewed_at, state}` where state is "APPROVED", "CHANGES_REQUESTED", or "COMMENTED"
+- `MERGED_BY`: PullRequest → Person (who merged the PR)
+
+**Note**: Since we only track commits in default branches (Layer 7), every PR in our simulation is already merged to main. The `INCLUDES` relationship links merged commits back to their originating PR.
+
+#### Test Data File
+- `simulation/data/layer8_pull_requests.json`
+
+#### Validation Queries
+```cypher
+// PRs by state and repository
+MATCH (pr:PullRequest)-[:TARGETS]->(b:Branch)-[:BRANCH_OF]->(r:Repository)
+RETURN r.name, pr.state, count(pr) as pr_count
+ORDER BY r.name, pr.state
+
+// Top PR authors
+MATCH (p:Person)<-[:CREATED_BY]-(pr:PullRequest)
+RETURN p.name, p.title, count(pr) as prs_created
+ORDER BY prs_created DESC
+LIMIT 10
+
+// Most active reviewers
+MATCH (p:Person)<-[r:REVIEWED_BY]-(pr:PullRequest)
+RETURN p.name, 
+       count(pr) as reviews_done,
+       sum(CASE WHEN r.state = 'APPROVED' THEN 1 ELSE 0 END) as approvals,
+       sum(CASE WHEN r.state = 'CHANGES_REQUESTED' THEN 1 ELSE 0 END) as change_requests
+ORDER BY reviews_done DESC
+LIMIT 10
+
+// Average PR review time (merged PRs)
+MATCH (pr:PullRequest {state: 'merged'})
+WHERE pr.merged_at IS NOT NULL
+RETURN avg(duration.between(pr.created_at, pr.merged_at).hours) as avg_review_hours,
+       min(duration.between(pr.created_at, pr.merged_at).hours) as min_review_hours,
+       max(duration.between(pr.created_at, pr.merged_at).hours) as max_review_hours
+
+// Large PRs (high risk)
+MATCH (pr:PullRequest)-[:CREATED_BY]->(author:Person)
+WHERE pr.commits_count > 10 OR pr.changed_files > 20
+RETURN pr.number, pr.title, pr.state,
+       author.name, pr.commits_count, pr.changed_files
+ORDER BY pr.commits_count DESC
+
+// PRs without reviews (risky)
+MATCH (pr:PullRequest {state: 'merged'})
+WHERE NOT exists((pr)-[:REVIEWED_BY]->())
+RETURN pr.number, pr.title, pr.created_at, pr.merged_at
+ORDER BY pr.merged_at DESC
+
+// Cross-team reviews (collaboration)
+MATCH (pr:PullRequest)-[:CREATED_BY]->(author:Person)-[:MEMBER_OF]->(author_team:Team)
+MATCH (pr)-[:REVIEWED_BY]->(reviewer:Person)-[:MEMBER_OF]->(reviewer_team:Team)
+WHERE author_team <> reviewer_team
+RETURN author_team.name as pr_team, 
+       reviewer_team.name as reviewer_team,
+       count(pr) as cross_team_reviews
+ORDER BY cross_team_reviews DESC
+
+// PR to Jira linkage (via commits)
+MATCH (pr:PullRequest)-[:INCLUDES]->(c:Commit)-[:REFERENCES]->(i:Issue)
+RETURN pr.number, pr.title, 
+       collect(DISTINCT i.key) as jira_keys,
+       size(collect(DISTINCT i.key)) as issue_count
+ORDER BY issue_count DESC
+
+// Time to first review
+MATCH (pr:PullRequest)-[r:REVIEWED_BY]->(reviewer:Person)
+WHERE r.reviewed_at IS NOT NULL
+WITH pr, min(r.reviewed_at) as first_review
+RETURN avg(duration.between(pr.created_at, first_review).hours) as avg_hours_to_first_review
+```
+
+---
+
 ## 4. Implementation Plan
 
 ### 4.1 Tools & Scripts
@@ -600,9 +728,14 @@ Each layer follows a consistent JSON structure with metadata, nodes, and relatio
 - Day 3: Generate Layer 6 (Branches)
 - Day 4-5: Link repos/branches to Jira, validate
 
-#### Week 4: Git History & Final Integration (Layer 7)
+#### Week 4: Git History (Layer 7)
 - Day 1-3: Generate Layer 7 (Commits & Files)
-- Day 4: Full integration testing
+- Day 4-5: Load Layer 7, validate commit patterns
+
+#### Week 5: Pull Requests & Final Integration (Layer 8)
+- Day 1-2: Generate Layer 8 (Pull Requests)
+- Day 3: Load Layer 8, link to commits and branches
+- Day 4: Full integration testing across all layers
 - Day 5: Run analytical queries, document findings
 
 ---

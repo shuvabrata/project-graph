@@ -156,8 +156,8 @@ ORDER BY i.start_date
 
 #### Relationships
 - `PART_OF`: Epic → Initiative
-- `OWNED_BY`: Epic → Person (epic owner - engineer or PM)
-- `RELATES_TO`: Epic → Team (team working on it)
+- `ASSIGNED_TO`: Epic → Person (epic owner - engineer or PM)
+- `TEAM`: Epic → Team (team working on it)
 
 #### Test Data File
 - `simulation/data/layer3_epics.json`
@@ -169,12 +169,12 @@ MATCH (e:Epic)-[:PART_OF]->(i:Initiative)
 RETURN i.summary, collect(e.key) as epics
 
 // Epic ownership distribution
-MATCH (e:Epic)-[:OWNED_BY]->(p:Person)
+MATCH (e:Epic)-[:ASSIGNED_TO]->(p:Person)
 RETURN p.name, p.role, count(e) as epic_count
 ORDER BY epic_count DESC
 
 // Cross-team epics
-MATCH (e:Epic)-[:RELATES_TO]->(t:Team)
+MATCH (e:Epic)-[:TEAM]->(t:Team)
 WITH e, count(t) as team_count
 WHERE team_count > 1
 RETURN e.key, e.summary, team_count

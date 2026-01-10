@@ -409,7 +409,7 @@ def main():
     }
     
     # Write to file
-    output_path = "../../data/layer1_people_teams.json"
+    output_path = "../data/layer1_people_teams.json"
     print(f"\n5. Writing to {output_path}...")
     with open(output_path, 'w', 
                encoding='utf-8') as f:

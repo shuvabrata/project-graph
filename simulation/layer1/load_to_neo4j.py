@@ -230,7 +230,7 @@ def main():
     neo4j_password = os.getenv('NEO4J_PASSWORD', 'password')
     
     # Read data file
-    data_path = "../../data/layer1_people_teams.json"
+    data_path = "../data/layer1_people_teams.json"
     print(f"\nReading data from {data_path}...")
     
     try:

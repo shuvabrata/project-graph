@@ -467,7 +467,10 @@ ORDER BY r.name
 - `AUTHORED_BY`: Commit → Person
 - `MODIFIES`: Commit → File (tracks all files changed in the commit)
   - Properties: `{lines_added, lines_deleted, files_changed}`
-- `REFERENCES`: Commit → Issue (extracted from message)
+- `REFERENCES`: Commit → Issue (extracted from commit message)
+  - Simple extraction: Create relationship if Jira key pattern found (e.g., PLAT-1, BUG-234)
+  - No reference type tracking (not reliably extractable)
+  - Distribution: 60% reference Stories, 20% reference Bugs, 20% no reference
 
 **Note**: We do NOT track PARENT (commit history chain). Since we only track main branch commits, the chronological order is sufficient.
 

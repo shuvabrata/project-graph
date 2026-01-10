@@ -52,10 +52,7 @@ Edit the `NEO4J_AUTH` environment variable in [docker-compose.yml](docker-compos
 - NEO4J_AUTH=neo4j/your_new_password
 ```
 
-Then update the password in [example.py](example.py):
-```python
-PASSWORD = "your_new_password"
-```
+Make sure to update the password in your application code accordingly.
 
 ## Useful Docker Commands
 

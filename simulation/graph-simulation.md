@@ -357,34 +357,69 @@ ORDER BY repository
 - Mix of active and merged branches
 - Some stale branches (last commit > 30 days)
 
-#### Relationships
+#### Branch Properties
+```yaml
+Properties:
+  - id: string (unique)
+  - name: string (branch name)
+  - is_default: boolean (main/master branch)
+  - is_protected: boolean (branch protection rules)
+  - is_deleted: boolean (merged and deleted)
+  - last_commit_sha: string (most recent commit)
+  - last_commit_timestamp: timestamp
+  - created_at: timestamp
+```
+
+#### Relationships (Directly Discoverable)
 - `BRANCH_OF`: Branch → Repository
-- `MERGED_TO`: Branch → Branch (feature → main)
-- `CREATED_BY`: Branch → Person
+  - Source: Git API, each branch belongs to exactly one repository
+  - Every branch must have this relationship
+
+**Note**: Branch creation authorship and merge relationships are NOT directly discoverable in Git metadata. These will be **inferred** in Layer 7:
+- Who created a branch: Inferred from the first commit author on that branch
+- Merge relationships: Inferred from merge commits (Commit → Branch relationships)
+- Branch activity: Inferred from commit timestamps and authors
 
 #### Test Data File
 - `simulation/data/layer6_branches.json`
 
 #### Validation Queries
 ```cypher
-// Active branches per repo
+// Total branches per repository
 MATCH (b:Branch)-[:BRANCH_OF]->(r:Repository)
-WHERE b.is_default = false
-RETURN r.name, count(b) as branch_count
-ORDER BY branch_count DESC
+RETURN r.name, 
+       count(b) as total_branches,
+       sum(CASE WHEN b.is_default THEN 1 ELSE 0 END) as default_branches,
+       sum(CASE WHEN b.is_deleted THEN 1 ELSE 0 END) as deleted_branches
+ORDER BY total_branches DESC
 
-// Stale branches (simulation will mark some)
+// Active branches per repo (non-default, not deleted)
+MATCH (b:Branch)-[:BRANCH_OF]->(r:Repository)
+WHERE b.is_default = false AND NOT b.is_deleted
+RETURN r.name, count(b) as active_branch_count
+ORDER BY active_branch_count DESC
+
+// Stale branches (last commit > 30 days ago)
 MATCH (b:Branch)
 WHERE b.last_commit_timestamp < datetime() - duration({days: 30})
   AND b.is_default = false
-RETURN b.name, b.last_commit_timestamp, duration.between(b.last_commit_timestamp, datetime()).days as days_old
+  AND NOT b.is_deleted
+RETURN b.name, b.last_commit_timestamp, 
+       duration.between(b.last_commit_timestamp, datetime()).days as days_old
 ORDER BY days_old DESC
 
-// Branches linked to Jira
-MATCH (b:Branch)
-WHERE b.name CONTAINS 'PLAT-' OR b.name CONTAINS 'PORT-' OR b.name CONTAINS 'DATA-'
-RETURN b.name, 
-       substring(b.name, 8, 7) as jira_key
+// Branches linked to Jira (by naming convention)
+MATCH (b:Branch)-[:BRANCH_OF]->(r:Repository)
+WHERE b.name =~ '.*/(PLAT|PORT|DATA)-[0-9]+.*'
+RETURN b.name, r.name,
+       [x in split(b.name, '/') WHERE x =~ '(PLAT|PORT|DATA)-[0-9]+'][0] as jira_key
+ORDER BY r.name, b.name
+
+// Protected branches by repository
+MATCH (b:Branch)-[:BRANCH_OF]->(r:Repository)
+WHERE b.is_protected = true
+RETURN r.name, collect(b.name) as protected_branches
+ORDER BY r.name
 ```
 
 ---

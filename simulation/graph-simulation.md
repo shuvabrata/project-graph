@@ -76,7 +76,7 @@ We will build the simulation incrementally, validating each layer before proceed
 - `MAPS_TO`: IdentityMapping → Person
 
 #### Test Data File
-- `data/layer1_people_teams.json`
+- `simulation/data/layer1_people_teams.json`
 
 #### Validation Queries
 ```cypher
@@ -108,21 +108,27 @@ ORDER BY team_size DESC
 
 #### Relationships
 - `PART_OF`: Initiative → Project
-- `OWNED_BY`: Initiative → Person (PM or Senior Leader)
+- `ASSIGNED_TO`: Initiative → Person (Senior/Staff engineer - technical owner)
+- `REPORTED_BY`: Initiative → Person (PM or Staff engineer - business stakeholder)
 
 #### Test Data File
-- `data/layer2_initiatives.json`
+- `simulation/data/layer2_initiatives.json`
 
 #### Validation Queries
 ```cypher
-// List all initiatives with owners
-MATCH (i:Initiative)-[:OWNED_BY]->(p:Person)
-RETURN i.key, i.summary, p.name, i.status
+// List all initiatives with assignees and reporters
+MATCH (i:Initiative)-[:ASSIGNED_TO]->(assignee:Person)
+MATCH (i)-[:REPORTED_BY]->(reporter:Person)
+RETURN i.key, i.summary, 
+       assignee.name as assignee, assignee.title as assignee_title,
+       reporter.name as reporter, reporter.title as reporter_title,
+       i.status
+ORDER BY i.key
 
 // Timeline view
 MATCH (i:Initiative)
-RETURN i.summary, i.created_at, i.due_date
-ORDER BY i.due_date
+RETURN i.summary, i.start_date, i.due_date, i.priority
+ORDER BY i.start_date
 ```
 
 ---
@@ -154,7 +160,7 @@ ORDER BY i.due_date
 - `RELATES_TO`: Epic → Team (team working on it)
 
 #### Test Data File
-- `data/layer3_epics.json`
+- `simulation/data/layer3_epics.json`
 
 #### Validation Queries
 ```cypher
@@ -210,8 +216,8 @@ RETURN e.key, e.summary, team_count
 - `PARENT_OF`: Story → Bug (for sub-tasks)
 
 #### Test Data File
-- `data/layer4_stories_bugs.json`
-- `data/layer4_sprints.json`
+- `simulation/data/layer4_stories_bugs.json`
+- `simulation/data/layer4_sprints.json`
 
 #### Validation Queries
 ```cypher
@@ -258,7 +264,7 @@ RETURN i.key, i.summary, i.status
 - `RELATES_TO`: Epic → Repository (many-to-many)
 
 #### Test Data File
-- `data/layer5_repositories.json`
+- `simulation/data/layer5_repositories.json`
 
 #### Validation Queries
 ```cypher
@@ -300,7 +306,7 @@ RETURN r.name
 - `CREATED_BY`: Branch → Person
 
 #### Test Data File
-- `data/layer6_branches.json`
+- `simulation/data/layer6_branches.json`
 
 #### Validation Queries
 ```cypher
@@ -378,8 +384,8 @@ Create ~50 key files across repos to track:
 - Stable files (rarely changed)
 
 #### Test Data Files
-- `data/layer7_commits.json`
-- `data/layer7_files.json`
+- `simulation/data/layer7_commits.json`
+- `simulation/data/layer7_files.json`
 
 #### Validation Queries
 ```cypher
@@ -443,27 +449,31 @@ ORDER BY commits DESC
 
 #### Data Generation Scripts
 ```
-scripts/
-├── generate_layer1_people_teams.py
-├── generate_layer2_initiatives.py
-├── generate_layer3_epics.py
-├── generate_layer4_stories_bugs.py
-├── generate_layer5_repositories.py
-├── generate_layer6_branches.py
-├── generate_layer7_commits.py
-└── utils/
-    ├── faker_helpers.py      # Name, date generation
-    ├── jira_key_generator.py # Realistic Jira keys
-    └── git_helpers.py        # Commit messages, SHAs
+simulation/
+├── layer1/
+│   ├── generate_data.py      # Generate people, teams, identity mappings
+│   ├── load_to_neo4j.py      # Load Layer 1 (clears database)
+│   ├── README.md
+│   └── SUMMARY.md
+├── layer2/
+│   ├── generate_data.py      # Generate initiatives
+│   ├── load_to_neo4j.py      # Load Layer 2 (incremental)
+│   └── README.md
+├── layer3/
+│   ├── generate_data.py      # Generate epics (future)
+│   └── load_to_neo4j.py
+├── data/
+│   ├── layer1_people_teams.json
+│   └── layer2_initiatives.json
+└── graph-simulation.md       # This file
 ```
 
-#### Data Loading Scripts
-```
-scripts/
-├── load_to_neo4j.py         # Generic loader
-├── validate_layer.py        # Run validation queries
-└── reset_database.py        # Clean slate
-```
+#### Pattern
+Each layer is self-contained:
+- `generate_data.py` - Creates JSON data for that layer
+- `load_to_neo4j.py` - Loads data into Neo4j
+- `README.md` - Usage instructions
+- Layer 1 clears database, Layers 2+ are incremental
 
 ### 4.2 JSON Schema Design
 
@@ -733,17 +743,24 @@ python -m venv venv
 source venv/bin/activate
 pip install neo4j faker
 
-# Generate all layers
-python scripts/generate_all_layers.py
+# Layer 1: Generate and load people/teams (clears database)
+cd simulation/layer1
+python generate_data.py
+python load_to_neo4j.py
 
-# Load to Neo4j
-python scripts/load_to_neo4j.py --layer all
+# Layer 2: Generate and load initiatives (incremental)
+cd ../layer2
+python generate_data.py
+python load_to_neo4j.py
 
-# Validate
-python scripts/validate_layer.py --layer all
+# Reload all from scratch
+cd simulation/layer1
+echo "yes" | python load_to_neo4j.py
+cd ../layer2
+python load_to_neo4j.py
 
-# Reset database (if needed)
-python scripts/reset_database.py --confirm
+# View in Neo4j Browser
+open http://localhost:7474
 ```
 
 ---

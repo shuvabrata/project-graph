@@ -14,7 +14,7 @@ A Neo4j graph database project with a simple movie database example.
 Start the Neo4j database using Docker Compose:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 This will:
@@ -61,19 +61,19 @@ PASSWORD = "your_new_password"
 
 ```bash
 # Start Neo4j
-docker-compose up -d
+docker compose up -d
 
 # Stop Neo4j
-docker-compose down
+docker compose down
 
 # View logs
-docker-compose logs -f neo4j
+docker compose logs -f neo4j
 
 # Stop and remove all data
-docker-compose down -v
+docker compose down -v
 
 # Restart Neo4j
-docker-compose restart
+docker compose restart
 ```
 
 ## Learn More

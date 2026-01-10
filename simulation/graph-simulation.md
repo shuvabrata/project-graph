@@ -586,32 +586,77 @@ RETURN story.key, story.summary
 #### PR Properties
 ```yaml
 Properties:
-  - id: string (unique)
-  - number: integer (PR number in repo)
-  - title: string
-  - description: string
-  - state: string ("open", "merged", "closed")
-  - created_at: timestamp
-  - updated_at: timestamp
-  - merged_at: timestamp (null if not merged)
-  - closed_at: timestamp (null if still open)
-  - draft: boolean (is it a draft PR)
-  - commits_count: integer
-  - additions: integer (total lines added)
-  - deletions: integer (total lines deleted)
-  - changed_files: integer
+  - id: string (unique, from API)
+  - number: integer (PR number in repo, from API)
+  - title: string (from API)
+  - description: string (from API: pr.body)
+  - state: string ("open", "merged", "closed" - from API)
+  - created_at: timestamp (from API)
+  - updated_at: timestamp (from API)
+  - merged_at: timestamp (null if not merged, from API)
+  - closed_at: timestamp (null if still open, from API)
+  - draft: boolean (is it a draft PR, from API)
+  - commits_count: integer (from API: pr.commits)
+  - additions: integer (total lines added, from API)
+  - deletions: integer (total lines deleted, from API)
+  - changed_files: integer (from API)
+  - comments: integer (general PR comments count, from API)
+  - review_comments: integer (inline code review comments, from API)
+  - head_branch_name: string (source branch name, even if deleted, from API: pr.head.ref)
+  - base_branch_name: string (target branch name, from API: pr.base.ref)
+  - labels: string[] (PR labels like "bug", "feature", from API)
+  - mergeable_state: string ("clean", "dirty", "blocked", "unknown" - from API)
 ```
+
+**Note**: All properties directly available from GitHub API:
+- Main PR data: `GET /repos/{owner}/{repo}/pulls/{pull_number}`
+- Commits: `GET /repos/{owner}/{repo}/pulls/{pull_number}/commits`
+- Reviews: `GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews`
 
 #### Relationships
 - `INCLUDES`: PullRequest → Commit (PR contains these commits)
+  - Source: `/pulls/{pr}/commits` API endpoint
+  - **CRITICAL**: Only exists for merged PRs (state='merged')
+  - Reason: Layer 7 only tracks commits on default branch (main)
+  - Open/closed PRs have no `INCLUDES` relationship (their commits don't exist in Layer 7 yet/ever)
+  
 - `TARGETS`: PullRequest → Branch (base branch - always main/default)
+  - Source: `pr.base.ref` from API (target branch)
+  - Always exists for all PRs (merged, open, closed)
+  
 - `FROM`: PullRequest → Branch (source branch - feature/bugfix branch)
+  - Source: `pr.head.ref` from API
+  - **May not exist**: Source branches often deleted after merge
+  - Fallback: `head_branch_name` property preserves branch name even if Branch node deleted
+  - Only exists for PRs where source branch hasn't been deleted
+  
 - `CREATED_BY`: PullRequest → Person (PR author)
+  - Source: `pr.user` from API
+  - Exists for all PRs
+  
 - `REVIEWED_BY`: PullRequest → Person (reviewer, can be multiple)
-  - Properties: `{reviewed_at, state}` where state is "APPROVED", "CHANGES_REQUESTED", or "COMMENTED"
+  - Properties: `{submitted_at, state}` where state is "APPROVED", "CHANGES_REQUESTED", or "COMMENTED"
+  - Source: `/pulls/{pr}/reviews` API endpoint
+  - Note: Only people who actually submitted reviews, not just requested reviewers
+  - Can exist for any PR state (merged, open, closed)
+  
+- `REQUESTED_REVIEWER`: PullRequest → Person (who was asked to review)
+  - Source: `pr.requested_reviewers` from API
+  - Captures review requests even if person never reviewed
+  - Enables "ignored request" and "responsiveness" analytics
+  - Can exist for any PR state (merged, open, closed)
+  
 - `MERGED_BY`: PullRequest → Person (who merged the PR)
+  - Source: `pr.merged_by` from API (null if not merged)
+  - Only exists for merged PRs
 
-**Note**: Since we only track commits in default branches (Layer 7), every PR in our simulation is already merged to main. The `INCLUDES` relationship links merged commits back to their originating PR.
+**Layer 7 Constraint Impact**:
+Since Layer 7 only tracks commits on the default branch (main), the `INCLUDES` relationship only exists for merged PRs. This means:
+- **Merged PRs (75%)**: Have `INCLUDES` → Commit relationships (commits now on main)
+- **Open PRs (15%)**: No `INCLUDES` relationships (commits still on feature branch, not in Layer 7)
+- **Closed PRs (10%)**: No `INCLUDES` relationships (commits abandoned, never merged)
+
+However, ALL PRs retain their commit metadata as properties (`commits_count`, `additions`, `deletions`, `changed_files`) from the GitHub API, even if the actual Commit nodes don't exist in our graph.
 
 #### Test Data File
 - `simulation/data/layer8_pull_requests.json`
@@ -622,6 +667,15 @@ Properties:
 MATCH (pr:PullRequest)-[:TARGETS]->(b:Branch)-[:BRANCH_OF]->(r:Repository)
 RETURN r.name, pr.state, count(pr) as pr_count
 ORDER BY r.name, pr.state
+
+// Verify INCLUDES only on merged PRs
+MATCH (pr:PullRequest)
+OPTIONAL MATCH (pr)-[:INCLUDES]->(c:Commit)
+RETURN pr.state, 
+       count(pr) as total_prs,
+       count(c) as prs_with_commits,
+       sum(CASE WHEN c IS NULL THEN 1 ELSE 0 END) as prs_without_commits
+ORDER BY pr.state
 
 // Top PR authors
 MATCH (p:Person)<-[:CREATED_BY]-(pr:PullRequest)
@@ -638,7 +692,7 @@ RETURN p.name,
 ORDER BY reviews_done DESC
 LIMIT 10
 
-// Average PR review time (merged PRs)
+// Average PR review time (merged PRs only)
 MATCH (pr:PullRequest {state: 'merged'})
 WHERE pr.merged_at IS NOT NULL
 RETURN avg(duration.between(pr.created_at, pr.merged_at).hours) as avg_review_hours,
@@ -667,18 +721,55 @@ RETURN author_team.name as pr_team,
        count(pr) as cross_team_reviews
 ORDER BY cross_team_reviews DESC
 
-// PR to Jira linkage (via commits)
-MATCH (pr:PullRequest)-[:INCLUDES]->(c:Commit)-[:REFERENCES]->(i:Issue)
+// PR to Jira linkage (via commits - merged PRs only)
+MATCH (pr:PullRequest {state: 'merged'})-[:INCLUDES]->(c:Commit)-[:REFERENCES]->(i:Issue)
 RETURN pr.number, pr.title, 
        collect(DISTINCT i.key) as jira_keys,
        size(collect(DISTINCT i.key)) as issue_count
 ORDER BY issue_count DESC
 
+// Open PRs without commit linkage (expected - commits not on main yet)
+MATCH (pr:PullRequest {state: 'open'})
+WHERE NOT exists((pr)-[:INCLUDES]->())
+RETURN pr.number, pr.title, pr.commits_count as commit_count_from_api,
+       duration.between(pr.created_at, datetime()).days as days_open
+ORDER BY days_open DESC
+
 // Time to first review
 MATCH (pr:PullRequest)-[r:REVIEWED_BY]->(reviewer:Person)
-WHERE r.reviewed_at IS NOT NULL
-WITH pr, min(r.reviewed_at) as first_review
+WHERE r.submitted_at IS NOT NULL
+WITH pr, min(r.submitted_at) as first_review
 RETURN avg(duration.between(pr.created_at, first_review).hours) as avg_hours_to_first_review
+
+// Review request responsiveness (who ignores reviews?)
+MATCH (pr:PullRequest)-[:REQUESTED_REVIEWER]->(p:Person)
+WHERE NOT exists((pr)-[:REVIEWED_BY]->(p))
+RETURN p.name, p.title, count(pr) as ignored_requests
+ORDER BY ignored_requests DESC
+
+// Blocked PRs requiring attention
+MATCH (pr:PullRequest {mergeable_state: 'blocked'})
+WHERE pr.state = 'open'
+RETURN pr.number, pr.title, pr.created_at, pr.labels,
+       duration.between(pr.created_at, datetime()).days as days_blocked
+ORDER BY days_blocked DESC
+
+// PR type distribution by labels
+MATCH (pr:PullRequest)
+UNWIND pr.labels as label
+RETURN label, count(*) as pr_count, 
+       avg(pr.changed_files) as avg_files_changed
+ORDER BY pr_count DESC
+
+// Team review responsiveness
+MATCH (pr:PullRequest)-[:REQUESTED_REVIEWER]->(reviewer:Person)-[:MEMBER_OF]->(t:Team)
+MATCH (pr)-[rev:REVIEWED_BY]->(reviewer)
+WITH t, pr, rev, duration.between(pr.created_at, rev.submitted_at).hours as response_hours
+RETURN t.name, 
+       avg(response_hours) as avg_response_hours,
+       min(response_hours) as fastest_response,
+       max(response_hours) as slowest_response
+ORDER BY avg_response_hours
 ```
 
 ---

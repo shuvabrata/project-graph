@@ -439,6 +439,7 @@ ORDER BY r.name
 ```yaml
 Properties:
   - sha: string (commit hash, unique identifier)
+  - message: string (commit message text, used to extract Jira keys)
   - timestamp: timestamp (when commit was created)
   - additions: integer (total lines added across all files)
   - deletions: integer (total lines deleted across all files)
@@ -476,9 +477,10 @@ Properties:
 - `PART_OF`: Commit → Branch (always to the default/main branch)
 - `AUTHORED_BY`: Commit → Person
 - `MODIFIES`: Commit → File (tracks all files changed in the commit)
+  - Properties: `{additions, deletions}` - per-file change stats from Git API
 - `REFERENCES`: Commit → Issue (if Jira key pattern exists in commit message)
   - Distribution: 60% reference Stories, 20% reference Bugs, 20% no reference
-  - Note: Jira key extraction from messages is handled in real queries, not during data generation
+  - Extracted from commit `message` property using regex patterns
 
 **Note**: We do NOT track PARENT (commit history chain). Since we only track main branch commits, the chronological order is sufficient.
 
@@ -486,14 +488,15 @@ Properties:
 Track **all files** modified in commits across repositories:
 
 **File Properties**:
-- `path`: Full file path (e.g., `src/services/UserService.java`)
-- `name`: File name only (e.g., `UserService.java`)
-- `extension`: File extension (e.g., `.java`, `.tsx`, `.py`, `.md`)
-- `language`: Programming language (e.g., `Java`, `TypeScript`, `Python`, `Markdown`)
-- `is_test`: Boolean indicating if this is a test file
-- `size`: File size in bytes
-- `created_at`: Timestamp when file was first created
-- `created_by`: Person who created the file (from first commit)
+- `path`: Full file path (e.g., `src/services/UserService.java`) - from Git API
+- `name`: File name only (e.g., `UserService.java`) - derived from path
+- `extension`: File extension (e.g., `.java`, `.tsx`, `.py`, `.md`) - derived from path
+- `language`: Programming language (e.g., `Java`, `TypeScript`, `Python`) - inferred from extension
+- `is_test`: Boolean indicating if this is a test file - heuristic (path contains "test", "spec", "__tests__")
+- `size`: File size in bytes - current size from Git API (not historical)
+- `created_at`: Timestamp when file was first created - from first commit (requires history scan)
+
+**Note**: Properties marked "derived" or "inferred" do not require additional API calls. `created_at` requires scanning commit history for the first commit touching this file.
 
 **File Distribution** (estimated):
 - Backend services: ~100 files (.java, .py, .js files)

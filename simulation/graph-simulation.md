@@ -781,6 +781,15 @@ ORDER BY avg_response_hours
 #### Data Generation Scripts
 ```
 simulation/
+├── data/
+│   ├── layer1_people_teams.json
+│   ├── layer2_initiatives.json
+│   ├── layer3_epics.json
+│   ├── layer4_stories_bugs.json
+│   ├── layer5_repositories.json
+│   ├── layer6_branches.json
+│   ├── layer7_commits.json
+│   └── layer8_pull_requests.json
 ├── layer1/
 │   ├── generate_data.py      # Generate people, teams, identity mappings
 │   ├── load_to_neo4j.py      # Load Layer 1 (clears database)
@@ -791,12 +800,36 @@ simulation/
 │   ├── load_to_neo4j.py      # Load Layer 2 (incremental)
 │   └── README.md
 ├── layer3/
-│   ├── generate_data.py      # Generate epics (future)
-│   └── load_to_neo4j.py
-├── data/
-│   ├── layer1_people_teams.json
-│   └── layer2_initiatives.json
-└── graph-simulation.md       # This file
+│   ├── generate_data.py      # Generate epics
+│   ├── load_to_neo4j.py      # Load Layer 3 (incremental)
+│   └── README.md
+├── layer4/
+│   ├── generate_data.py      # Generate stories, bugs, sprints
+│   ├── load_to_neo4j.py      # Load Layer 4 (incremental)
+│   └── README.md
+├── layer5/
+│   ├── generate_data.py      # Generate repositories
+│   ├── load_to_neo4j.py      # Load Layer 5 (incremental)
+│   ├── README.md
+│   └── SUMMARY.md
+├── layer6/
+│   ├── generate_data.py      # Generate branches
+│   ├── load_to_neo4j.py      # Load Layer 6 (incremental)
+│   ├── README.md
+│   └── SUMMARY.md
+├── layer7/
+│   ├── generate_data.py      # Generate commits and files
+│   ├── load_to_neo4j.py      # Load Layer 7 (incremental)
+│   ├── README.md
+│   └── SUMMARY.md
+├── layer8/
+│   ├── generate_data.py      # Generate pull requests
+│   ├── load_to_neo4j.py      # Load Layer 8 (incremental)
+│   ├── README.md
+│   └── SUMMARY.md
+├── reload_all.sh             # Reload all layers in sequence
+├── graph-simulation.md       # This file
+└── QUICK-START.md
 ```
 
 #### Pattern
@@ -804,6 +837,7 @@ Each layer is self-contained:
 - `generate_data.py` - Creates JSON data for that layer
 - `load_to_neo4j.py` - Loads data into Neo4j
 - `README.md` - Usage instructions
+- `SUMMARY.md` - Implementation summary (for layers 1, 5-8)
 - Layer 1 clears database, Layers 2+ are incremental
 
 ### 4.2 JSON Schema Design

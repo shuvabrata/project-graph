@@ -953,19 +953,6 @@ Run queries from high-level-design.md Section 2.2:
 - [ ] Can answer 10+ analytical questions
 - [ ] Performance: Queries complete in <500ms
 
-### 7.2 Analytical Questions to Answer
-Using the simulated data, we should be able to answer:
-
-1. Which epic is most at risk of missing its deadline?
-2. Which file is the biggest hotspot (churn + authors + bugs)?
-3. Who are the top 5 contributors to the Platform Modernization initiative?
-4. What percentage of critical bugs are assigned to junior engineers?
-5. Which stories were marked Done but have no associated commits?
-6. What is the average time from story creation to first commit?
-7. Which team has the highest bug-to-story ratio?
-8. Are there any circular dependencies between epics?
-9. Which branches are stale and should be cleaned up?
-10. What is the team velocity trend over the last 4 sprints?
 
 ### 7.3 Documentation Deliverables
 - [ ] This simulation plan (this document)
@@ -1017,9 +1004,3 @@ Based on simulation learnings:
 - **If queries too slow**: Focus on schema optimization before adding more data
 
 ---
-
-## Document History
-
-| Version | Date | Author | Changes |
-|---------|------|--------|---------|
-| 0.1 | 2026-01-04 | Copilot | Initial simulation plan |

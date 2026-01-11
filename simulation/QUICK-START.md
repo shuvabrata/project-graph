@@ -136,38 +136,13 @@ python load_to_neo4j.py
 
 ## Reload All Data from Scratch
 
-If you need to start over:
+To reload all data from scratch, use the provided script:
 
 ```bash
-# From simulation directory
-cd simulation
-
-# Layer 1 clears the entire database
-cd layer1 && python load_to_neo4j.py
-
-# Then reload subsequent layers
-cd ../layer2 && python load_to_neo4j.py
-cd ../layer3 && python load_to_neo4j.py
-cd ../layer4 && python load_to_neo4j.py
-cd ../layer5 && python load_to_neo4j.py
-cd ../layer6 && python load_to_neo4j.py
-cd ../layer7 && python load_to_neo4j.py
-cd ../layer8 && python load_to_neo4j.py
+./reload_all.sh
 ```
 
-**Or use a one-liner:**
-
-```bash
-cd simulation && \
-  cd layer1 && python load_to_neo4j.py && \
-  cd ../layer2 && python load_to_neo4j.py && \
-  cd ../layer3 && python load_to_neo4j.py && \
-  cd ../layer4 && python load_to_neo4j.py && \
-  cd ../layer5 && python load_to_neo4j.py && \
-  cd ../layer6 && python load_to_neo4j.py && \
-  cd ../layer7 && python load_to_neo4j.py && \
-  cd ../layer8 && python load_to_neo4j.py
-```
+This script will clear the database (via Layer 1) and reload all 8 layers sequentially.
 
 ## Verify Installation
 

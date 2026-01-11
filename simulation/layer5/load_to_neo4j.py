@@ -4,13 +4,15 @@ Loads repository nodes and COLLABORATOR relationships into Neo4j.
 """
 
 import json
+import os
 from neo4j import GraphDatabase
 from typing import Dict, Any
 
 # Neo4j connection details
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "password123"
+NEO4J_URI = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
+NEO4J_USER = os.getenv('NEO4J_USERNAME', 'neo4j')
+NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD', 'password')
+
 
 def load_data_file() -> Dict[str, Any]:
     """Load the generated Layer 5 data."""

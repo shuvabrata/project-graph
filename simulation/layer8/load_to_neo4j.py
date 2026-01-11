@@ -4,21 +4,19 @@ Loads PR nodes and relationships into Neo4j database.
 """
 
 import json
+import os
 from typing import Dict, Any
 
 from neo4j import GraphDatabase
 
 # Neo4j connection details
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "password123"
-
-
+NEO4J_URI = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
+NEO4J_USER = os.getenv('NEO4J_USERNAME', 'neo4j')
+NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD', 'password')
 def load_data_file() -> Dict[str, Any]:
     """Load the generated Layer 8 data."""
     with open('../data/layer8_pull_requests.json', 'r', encoding='utf-8') as f:
         return json.load(f)
-
 
 def create_pull_request_nodes(session, pull_requests: list):
     """Create PullRequest nodes in Neo4j."""

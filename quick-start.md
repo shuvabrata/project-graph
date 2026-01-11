@@ -5,7 +5,7 @@ A Neo4j graph database project with a simple movie database example.
 ## Prerequisites
 
 - Docker and Docker Compose installed
-- Python 3.14 or higher (for running the example)
+- Python 3.14 or higher 
 
 ## Quick Start
 

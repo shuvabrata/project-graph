@@ -5,7 +5,7 @@ This guide provides step-by-step instructions to set up and run the simulation f
 ## Prerequisites
 
 - Docker and Docker Compose installed
-- Python 3.8 or higher
+- Python 3.14 or higher
 - Neo4j running (via Docker Compose)
 
 ## Initial Setup

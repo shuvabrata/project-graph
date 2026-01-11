@@ -9,7 +9,23 @@ A Neo4j graph database project with a simple movie database example.
 
 ## Quick Start
 
-### 1. Start Neo4j with Docker
+### 1. Configure Environment Variables
+
+Copy the example environment file and update it with your credentials:
+
+```bash
+cp .env.example .env
+```
+
+Edit the `.env` file and update the Neo4j credentials:
+```
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_secure_password
+```
+
+**Important**: Make sure to update the password before proceeding to the next step.
+
+### 2. Start Neo4j with Docker
 
 Start the Neo4j database using Docker Compose:
 
@@ -20,39 +36,40 @@ docker compose up -d
 This will:
 - Pull the Neo4j Community Edition image (version 5.26)
 - Start Neo4j on ports 7474 (HTTP) and 7687 (Bolt)
-- Set default credentials: username `neo4j`, password `password123`
+- Use the credentials from your `.env` file
 
-### 2. Access Neo4j Browser
+### 3. Access Neo4j Browser
 
 Open your web browser and navigate to:
 ```
 http://localhost:7474
 ```
 
-Login with:
-- **Username**: `neo4j`
-- **Password**: `**********`
+Login with the credentials you set in your `.env` file:
+- **Username**: Value from `NEO4J_USER`
+- **Password**: Value from `NEO4J_PASSWORD`
 
-### 3. Install Python Dependencies
+### 4. Install Python Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Or install directly:
+## Configuration
+
+### Environment Variables
+
+All sensitive configuration is stored in the `.env` file. This file is not tracked in git (it's in `.gitignore`).
+
+Available environment variables:
+- `NEO4J_USER`: Neo4j database username
+- `NEO4J_PASSWORD`: Neo4j database password
+
+To change credentials, simply update the values in your `.env` file and restart the Docker container:
+
 ```bash
-pip install neo4j
+docker compose restart
 ```
-
-
-### Changing the Password
-
-Edit the `NEO4J_AUTH` environment variable in [docker-compose.yml](docker-compose.yml):
-```yaml
-- NEO4J_AUTH=neo4j/your_new_password
-```
-
-Make sure to update the password in your application code accordingly.
 
 ## Useful Docker Commands
 

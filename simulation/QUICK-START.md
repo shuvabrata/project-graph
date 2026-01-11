@@ -161,7 +161,7 @@ CALL db.schema.nodeTypeProperties()
 
 // Option 3: Using APOC for comprehensive schema (if installed)
 CALL apoc.meta.schema()
-
+```
 
 ### Check Data in Neo4j Browser
 

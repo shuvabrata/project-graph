@@ -146,6 +146,23 @@ This script will clear the database (via Layer 1) and reload all 8 layers sequen
 
 ## Verify Installation
 
+### View Schema Visualization
+
+To see the complete schema of your graph database with all node types and relationships:
+
+```cypher
+// Option 1: Visual graph structure (shows nodes and relationships)
+CALL db.schema.visualization() 
+or 
+CALL apoc.meta.graph()
+
+// Option 2: Detailed schema with properties
+CALL db.schema.nodeTypeProperties()
+
+// Option 3: Using APOC for comprehensive schema (if installed)
+CALL apoc.meta.schema()
+
+
 ### Check Data in Neo4j Browser
 
 Open http://localhost:7474 and try these queries:

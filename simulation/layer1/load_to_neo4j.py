@@ -121,30 +121,34 @@ class Layer1Loader:
                 if rel_type not in rel_counts:
                     rel_counts[rel_type] = 0
                 
-                # Create relationship based on type
+                # Create relationship based on type (with bidirectional relationships)
                 if rel_type == "MEMBER_OF":
                     query = """
                     MATCH (p:Person {id: $from_id})
                     MATCH (t:Team {id: $to_id})
                     CREATE (p)-[:MEMBER_OF]->(t)
+                    CREATE (t)-[:MEMBER_OF]->(p)
                     """
                 elif rel_type == "REPORTS_TO":
                     query = """
                     MATCH (p1:Person {id: $from_id})
                     MATCH (p2:Person {id: $to_id})
                     CREATE (p1)-[:REPORTS_TO]->(p2)
+                    CREATE (p2)-[:MANAGES]->(p1)
                     """
                 elif rel_type == "MANAGES":
                     query = """
                     MATCH (p:Person {id: $from_id})
                     MATCH (t:Team {id: $to_id})
                     CREATE (p)-[:MANAGES]->(t)
+                    CREATE (t)-[:MANAGED_BY]->(p)
                     """
                 elif rel_type == "MAPS_TO":
                     query = """
                     MATCH (i:IdentityMapping {id: $from_id})
                     MATCH (p:Person {id: $to_id})
                     CREATE (i)-[:MAPS_TO]->(p)
+                    CREATE (p)-[:MAPS_TO]->(i)
                     """
                 else:
                     print(f"   ⚠️  Unknown relationship type: {rel_type}")

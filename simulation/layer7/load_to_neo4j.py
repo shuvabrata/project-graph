@@ -72,41 +72,45 @@ class Layer7Loader:
                     rels_by_type[rel_type] = []
                 rels_by_type[rel_type].append(rel)
             
-            # PART_OF: Commit → Branch
+            # PART_OF: Commit → Branch (bidirectional)
             for rel in rels_by_type.get("PART_OF", []):
                 session.run("""
                     MATCH (c:Commit {id: $from_id})
                     MATCH (b:Branch {id: $to_id})
                     CREATE (c)-[:PART_OF]->(b)
+                    CREATE (b)-[:CONTAINS]->(c)
                 """, from_id=rel["from_id"], to_id=rel["to_id"])
             print(f"   ✓ Created {len(rels_by_type.get('PART_OF', []))} PART_OF relationships")
             
-            # AUTHORED_BY: Commit → Person
+            # AUTHORED_BY: Commit → Person (bidirectional)
             for rel in rels_by_type.get("AUTHORED_BY", []):
                 session.run("""
                     MATCH (c:Commit {id: $from_id})
                     MATCH (p:Person {id: $to_id})
                     CREATE (c)-[:AUTHORED_BY]->(p)
+                    CREATE (p)-[:AUTHORED_BY]->(c)
                 """, from_id=rel["from_id"], to_id=rel["to_id"])
             print(f"   ✓ Created {len(rels_by_type.get('AUTHORED_BY', []))} AUTHORED_BY relationships")
             
-            # MODIFIES: Commit → File (with properties)
+            # MODIFIES: Commit → File (with properties, bidirectional)
             for rel in rels_by_type.get("MODIFIES", []):
                 props = rel.get("properties", {})
                 session.run("""
                     MATCH (c:Commit {id: $from_id})
                     MATCH (f:File {id: $to_id})
                     CREATE (c)-[:MODIFIES {additions: $additions, deletions: $deletions}]->(f)
+                    CREATE (f)-[:MODIFIES {additions: $additions, deletions: $deletions}]->(c)
                 """, from_id=rel["from_id"], to_id=rel["to_id"],
                     additions=props.get("additions", 0), deletions=props.get("deletions", 0))
             print(f"   ✓ Created {len(rels_by_type.get('MODIFIES', []))} MODIFIES relationships")
             
-            # REFERENCES: Commit → Issue
+            # REFERENCES: Commit → Issue (bidirectional)
             for rel in rels_by_type.get("REFERENCES", []):
                 session.run("""
                     MATCH (c:Commit {id: $from_id})
                     MATCH (i:Issue {id: $to_id})
                     CREATE (c)-[:REFERENCES]->(i)
+                    CREATE (i)-[:REFERENCES]->(c)
                 """, from_id=rel["from_id"], to_id=rel["to_id"])
             print(f"   ✓ Created {len(rels_by_type.get('REFERENCES', []))} REFERENCES relationships\n")
     

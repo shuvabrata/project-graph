@@ -37,12 +37,13 @@ def create_branch_nodes(session, branches: list):
     return result.consume().counters.nodes_created
 
 def create_branch_of_relationships(session, relationships: list):
-    """Create BRANCH_OF relationships in Neo4j."""
+    """Create BRANCH_OF relationships in Neo4j (bidirectional)."""
     query = """
     UNWIND $relationships as rel
     MATCH (b:Branch {id: rel.from_id})
     MATCH (r:Repository {id: rel.to_id})
     CREATE (b)-[:BRANCH_OF]->(r)
+    CREATE (r)-[:BRANCH_OF]->(b)
     """
     result = session.run(query, relationships=relationships)
     return result.consume().counters.relationships_created

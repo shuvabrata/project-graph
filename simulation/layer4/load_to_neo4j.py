@@ -132,48 +132,55 @@ class Layer4Loader:
                 if rel_type not in rel_counts:
                     rel_counts[rel_type] = 0
                 
-                # Create relationship based on type
+                # Create relationship based on type (with bidirectional relationships)
                 if rel_type == "PART_OF":
                     query = """
                     MATCH (i:Issue {id: $from_id})
                     MATCH (e:Epic {id: $to_id})
                     CREATE (i)-[:PART_OF]->(e)
+                    CREATE (e)-[:CONTAINS]->(i)
                     """
                 elif rel_type == "ASSIGNED_TO":
                     query = """
                     MATCH (i:Issue {id: $from_id})
                     MATCH (p:Person {id: $to_id})
                     CREATE (i)-[:ASSIGNED_TO]->(p)
+                    CREATE (p)-[:ASSIGNED_TO]->(i)
                     """
                 elif rel_type == "REPORTED_BY":
                     query = """
                     MATCH (i:Issue {id: $from_id})
                     MATCH (p:Person {id: $to_id})
                     CREATE (i)-[:REPORTED_BY]->(p)
+                    CREATE (p)-[:REPORTED_BY]->(i)
                     """
                 elif rel_type == "IN_SPRINT":
                     query = """
                     MATCH (i:Issue {id: $from_id})
                     MATCH (s:Sprint {id: $to_id})
                     CREATE (i)-[:IN_SPRINT]->(s)
+                    CREATE (s)-[:CONTAINS]->(i)
                     """
                 elif rel_type == "BLOCKS":
                     query = """
                     MATCH (i1:Issue {id: $from_id})
                     MATCH (i2:Issue {id: $to_id})
                     CREATE (i1)-[:BLOCKS]->(i2)
+                    CREATE (i2)-[:BLOCKED_BY]->(i1)
                     """
                 elif rel_type == "DEPENDS_ON":
                     query = """
                     MATCH (i1:Issue {id: $from_id})
                     MATCH (i2:Issue {id: $to_id})
                     CREATE (i1)-[:DEPENDS_ON]->(i2)
+                    CREATE (i2)-[:DEPENDENCY_OF]->(i1)
                     """
                 elif rel_type == "RELATES_TO":
                     query = """
                     MATCH (bug:Issue {id: $from_id})
                     MATCH (story:Issue {id: $to_id})
                     CREATE (bug)-[:RELATES_TO]->(story)
+                    CREATE (story)-[:RELATES_TO]->(bug)
                     """
                 else:
                     print(f"   ⚠️  Unknown relationship type: {rel_type}")

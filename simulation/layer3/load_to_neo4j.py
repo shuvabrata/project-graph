@@ -111,24 +111,27 @@ class Layer3Loader:
                 if rel_type not in rel_counts:
                     rel_counts[rel_type] = 0
                 
-                # Create relationship based on type
+                # Create relationship based on type (with bidirectional relationships)
                 if rel_type == "PART_OF":
                     query = """
                     MATCH (e:Epic {id: $from_id})
                     MATCH (i:Initiative {id: $to_id})
                     CREATE (e)-[:PART_OF]->(i)
+                    CREATE (i)-[:CONTAINS]->(e)
                     """
                 elif rel_type == "ASSIGNED_TO":
                     query = """
                     MATCH (e:Epic {id: $from_id})
                     MATCH (p:Person {id: $to_id})
                     CREATE (e)-[:ASSIGNED_TO]->(p)
+                    CREATE (p)-[:ASSIGNED_TO]->(e)
                     """
                 elif rel_type == "TEAM":
                     query = """
                     MATCH (e:Epic {id: $from_id})
                     MATCH (t:Team {id: $to_id})
                     CREATE (e)-[:TEAM]->(t)
+                    CREATE (t)-[:TEAM]->(e)
                     """
                 else:
                     print(f"   ⚠️  Unknown relationship type: {rel_type}")

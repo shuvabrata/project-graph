@@ -39,37 +39,26 @@ def create_repository_nodes(session, repositories: list):
     return result.consume().counters.nodes_created
 
 def create_collaborator_relationships(session, relationships: list):
-    """Create COLLABORATOR relationships in Neo4j."""
+    """Create COLLABORATOR relationships in Neo4j (bidirectional)."""
+    # Extended query with optional properties and bidirectional relationships
     query = """
     UNWIND $relationships as rel
     MATCH (from {id: rel.from_id})
     MATCH (to:Repository {id: rel.to_id})
     CREATE (from)-[c:COLLABORATOR]->(to)
+    CREATE (to)-[r:COLLABORATOR]->(from)
     SET c.permission = rel.properties.permission,
-        c.granted_at = date(rel.properties.granted_at)
-    """
-    
-    # Add optional properties
-    for rel in relationships:
-        if 'role' in rel.get('properties', {}):
-            pass  # Will handle in query
-        if 'reason' in rel.get('properties', {}):
-            pass  # Will handle in query
-    
-    # Extended query with optional properties
-    query = """
-    UNWIND $relationships as rel
-    MATCH (from {id: rel.from_id})
-    MATCH (to:Repository {id: rel.to_id})
-    CREATE (from)-[c:COLLABORATOR]->(to)
-    SET c.permission = rel.properties.permission,
-        c.granted_at = date(rel.properties.granted_at)
-    WITH c, rel
+        c.granted_at = date(rel.properties.granted_at),
+        r.permission = rel.properties.permission,
+        r.granted_at = date(rel.properties.granted_at)
+    WITH c, r, rel
     FOREACH (_ IN CASE WHEN rel.properties.role IS NOT NULL THEN [1] ELSE [] END |
-        SET c.role = rel.properties.role
+        SET c.role = rel.properties.role,
+            r.role = rel.properties.role
     )
     FOREACH (_ IN CASE WHEN rel.properties.reason IS NOT NULL THEN [1] ELSE [] END |
-        SET c.reason = rel.properties.reason
+        SET c.reason = rel.properties.reason,
+            r.reason = rel.properties.reason
     )
     """
     

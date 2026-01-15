@@ -119,24 +119,27 @@ class Layer2Loader:
                 if rel_type not in rel_counts:
                     rel_counts[rel_type] = 0
                 
-                # Create relationship based on type
+                # Create relationship based on type (with bidirectional relationships)
                 if rel_type == "PART_OF":
                     query = """
                     MATCH (i:Initiative {id: $from_id})
                     MATCH (p:Project {id: $to_id})
                     CREATE (i)-[:PART_OF]->(p)
+                    CREATE (p)-[:CONTAINS]->(i)
                     """
                 elif rel_type == "ASSIGNED_TO":
                     query = """
                     MATCH (i:Initiative {id: $from_id})
                     MATCH (p:Person {id: $to_id})
                     CREATE (i)-[:ASSIGNED_TO]->(p)
+                    CREATE (p)-[:ASSIGNED_TO]->(i)
                     """
                 elif rel_type == "REPORTED_BY":
                     query = """
                     MATCH (i:Initiative {id: $from_id})
                     MATCH (p:Person {id: $to_id})
                     CREATE (i)-[:REPORTED_BY]->(p)
+                    CREATE (p)-[:REPORTED_BY]->(i)
                     """
                 else:
                     print(f"   ⚠️  Unknown relationship type: {rel_type}")

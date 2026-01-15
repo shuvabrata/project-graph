@@ -49,7 +49,7 @@ def create_pull_request_nodes(session, pull_requests: list):
 
 
 def create_pr_relationships(session, relationships: list):
-    """Create all PR-related relationships in Neo4j."""
+    """Create all PR-related relationships in Neo4j (bidirectional)."""
     
     relationship_types = {
         'INCLUDES': 0,
@@ -69,79 +69,86 @@ def create_pr_relationships(session, relationships: list):
             rels_by_type[rel_type] = []
         rels_by_type[rel_type].append(rel)
     
-    # INCLUDES: PullRequest → Commit (for merged PRs only)
+    # INCLUDES: PullRequest → Commit (for merged PRs only, bidirectional)
     if 'INCLUDES' in rels_by_type:
         query = """
         UNWIND $relationships as rel
         MATCH (pr:PullRequest {id: rel.from_id})
         MATCH (c:Commit {id: rel.to_id})
         CREATE (pr)-[:INCLUDES]->(c)
+        CREATE (c)-[:INCLUDES]->(pr)
         """
         result = session.run(query, relationships=rels_by_type['INCLUDES'])
         relationship_types['INCLUDES'] = result.consume().counters.relationships_created
     
-    # TARGETS: PullRequest → Branch (base branch)
+    # TARGETS: PullRequest → Branch (base branch, bidirectional)
     if 'TARGETS' in rels_by_type:
         query = """
         UNWIND $relationships as rel
         MATCH (pr:PullRequest {id: rel.from_id})
         MATCH (b:Branch {id: rel.to_id})
         CREATE (pr)-[:TARGETS]->(b)
+        CREATE (b)-[:TARGETS]->(pr)
         """
         result = session.run(query, relationships=rels_by_type['TARGETS'])
         relationship_types['TARGETS'] = result.consume().counters.relationships_created
     
-    # FROM: PullRequest → Branch (head branch)
+    # FROM: PullRequest → Branch (head branch, bidirectional)
     if 'FROM' in rels_by_type:
         query = """
         UNWIND $relationships as rel
         MATCH (pr:PullRequest {id: rel.from_id})
         MATCH (b:Branch {id: rel.to_id})
         CREATE (pr)-[:FROM]->(b)
+        CREATE (b)-[:FROM]->(pr)
         """
         result = session.run(query, relationships=rels_by_type['FROM'])
         relationship_types['FROM'] = result.consume().counters.relationships_created
     
-    # CREATED_BY: PullRequest → Person
+    # CREATED_BY: PullRequest → Person (bidirectional)
     if 'CREATED_BY' in rels_by_type:
         query = """
         UNWIND $relationships as rel
         MATCH (pr:PullRequest {id: rel.from_id})
         MATCH (p:Person {id: rel.to_id})
         CREATE (pr)-[:CREATED_BY]->(p)
+        CREATE (p)-[:CREATED_BY]->(pr)
         """
         result = session.run(query, relationships=rels_by_type['CREATED_BY'])
         relationship_types['CREATED_BY'] = result.consume().counters.relationships_created
     
-    # REVIEWED_BY: PullRequest → Person (with state property)
+    # REVIEWED_BY: PullRequest → Person (with state property, bidirectional)
     if 'REVIEWED_BY' in rels_by_type:
         query = """
         UNWIND $relationships as rel
         MATCH (pr:PullRequest {id: rel.from_id})
         MATCH (p:Person {id: rel.to_id})
         CREATE (pr)-[:REVIEWED_BY {state: rel.properties.state}]->(p)
+        CREATE (p)-[:REVIEWED_BY {state: rel.properties.state}]->(pr)
         """
         result = session.run(query, relationships=rels_by_type['REVIEWED_BY'])
         relationship_types['REVIEWED_BY'] = result.consume().counters.relationships_created
     
-    # REQUESTED_REVIEWER: PullRequest → Person
+    # REQUESTED_REVIEWER: PullRequest → Person (bidirectional)
     if 'REQUESTED_REVIEWER' in rels_by_type:
         query = """
         UNWIND $relationships as rel
         MATCH (pr:PullRequest {id: rel.from_id})
         MATCH (p:Person {id: rel.to_id})
         CREATE (pr)-[:REQUESTED_REVIEWER]->(p)
+        CREATE (p)-[:REQUESTED_REVIEWER]->(pr)
         """
         result = session.run(query, relationships=rels_by_type['REQUESTED_REVIEWER'])
         relationship_types['REQUESTED_REVIEWER'] = result.consume().counters.relationships_created
     
-    # MERGED_BY: PullRequest → Person (for merged PRs only)
+    # MERGED_BY: PullRequest → Person (for merged PRs only, bidirectional)
     if 'MERGED_BY' in rels_by_type:
         query = """
         UNWIND $relationships as rel
         MATCH (pr:PullRequest {id: rel.from_id})
         MATCH (p:Person {id: rel.to_id})
         CREATE (pr)-[:MERGED_BY]->(p)
+        CREATE (p)-[:MERGED_BY]->(pr)
         """
         result = session.run(query, relationships=rels_by_type['MERGED_BY'])
         relationship_types['MERGED_BY'] = result.consume().counters.relationships_created

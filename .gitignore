@@ -211,6 +211,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project-specific ignores
 simulation/data/layer1_people_teams.json
 simulation/data/layer2_initiatives.json
 simulation/data/layer3_epics.json
@@ -219,3 +221,6 @@ simulation/data/layer5_repositories.json
 simulation/data/layer6_branches.json
 simulation/data/layer7_commits.json
 simulation/data/layer8_pull_requests.json
+
+# Sensitive configs
+.config*

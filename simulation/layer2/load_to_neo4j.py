@@ -1,6 +1,6 @@
 """
 Layer 2 Neo4j Loader: Load Jira Initiatives into Neo4j
-Loads Project and Initiative nodes and creates relationships to existing IdentityMapping nodes.
+Loads Project and Initiative nodes and creates relationships to existing Person nodes.
 DOES NOT clear existing data - this is an incremental load.
 """
 
@@ -16,7 +16,7 @@ from neo4j import GraphDatabase
 from models import (
     Project, Initiative, Relationship,
     merge_project, merge_initiative, merge_relationship,
-    create_constraints, get_jira_identity_id
+    create_constraints
 )
 
 class Layer2Loader:
@@ -76,29 +76,25 @@ class Layer2Loader:
                 
                 initiative = Initiative(**initiative_data)
                 
-                # Create relationships to Jira IdentityMapping nodes
+                # Create relationships directly to Person nodes
                 relationships = []
                 
                 if assignee_person_id:
-                    # Convert person_id to Jira IdentityMapping id
-                    assignee_identity_id = get_jira_identity_id(assignee_person_id)
                     relationships.append(Relationship(
                         type="ASSIGNED_TO",
                         from_id=initiative.id,
-                        to_id=assignee_identity_id,
+                        to_id=assignee_person_id,
                         from_type="Initiative",
-                        to_type="IdentityMapping"
+                        to_type="Person"
                     ))
                 
                 if reporter_person_id:
-                    # Convert person_id to Jira IdentityMapping id
-                    reporter_identity_id = get_jira_identity_id(reporter_person_id)
                     relationships.append(Relationship(
                         type="REPORTED_BY",
                         from_id=initiative.id,
-                        to_id=reporter_identity_id,
+                        to_id=reporter_person_id,
                         from_type="Initiative",
-                        to_type="IdentityMapping"
+                        to_type="Person"
                     ))
                 
                 # Merge initiative with relationships
@@ -146,12 +142,11 @@ class Layer2Loader:
         print("=" * 60)
         
         with self.driver.session() as session:
-            # Query 1: List all initiatives with assignees and reporters (through IdentityMapping)
+            # Query 1: List all initiatives with assignees and reporters
             print("\n1. Initiatives with assignees and reporters:")
             query1 = """
-            MATCH (i:Initiative)-[:ASSIGNED_TO]->(assignee_identity:IdentityMapping)-[:MAPS_TO]->(assignee:Person)
-            MATCH (i)-[:REPORTED_BY]->(reporter_identity:IdentityMapping)-[:MAPS_TO]->(reporter:Person)
-            WHERE assignee_identity.provider = 'Jira' AND reporter_identity.provider = 'Jira'
+            MATCH (i:Initiative)-[:ASSIGNED_TO]->(assignee:Person)
+            MATCH (i)-[:REPORTED_BY]->(reporter:Person)
             RETURN i.key, i.summary, assignee.name as assignee, reporter.name as reporter, i.status
             ORDER BY i.key
             """

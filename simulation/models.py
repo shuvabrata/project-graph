@@ -109,7 +109,7 @@ class Initiative:
     
     Note: The 'assignee_id' and 'reporter_id' fields are NOT part of this dataclass.
     They should be extracted from JSON and used to create ASSIGNED_TO and REPORTED_BY
-    relationships to IdentityMapping nodes (Jira provider).
+    relationships directly to Person nodes.
     
     Example:
         initiative = Initiative(
@@ -119,13 +119,13 @@ class Initiative:
             ...
         )
         
-        # Relationships point to Jira IdentityMapping, not Person directly
+        # Relationships point directly to Person nodes
         assignee_rel = Relationship(
             type="ASSIGNED_TO",
             from_id=initiative.id,
-            to_id="identity_jira_person_alice",  # IdentityMapping with provider='Jira'
+            to_id="person_alice",  # Person node ID
             from_type="Initiative",
-            to_type="IdentityMapping"
+            to_type="Person"
         )
     """
     id: str
@@ -171,8 +171,8 @@ BIDIRECTIONAL_RELATIONSHIPS = {
     
     # Layer 2
     "PART_OF": "CONTAINS",          # Initiative → Project / Project ← Initiative
-    "ASSIGNED_TO": "ASSIGNED_TO",   # Initiative ↔ IdentityMapping
-    "REPORTED_BY": "REPORTED_BY",   # Initiative ↔ IdentityMapping
+    "ASSIGNED_TO": "ASSIGNED_TO",   # Initiative ↔ Person
+    "REPORTED_BY": "REPORTED_BY",   # Initiative ↔ Person
 }
 
 
@@ -450,14 +450,4 @@ def merge_relationship(session: Session, relationship: Relationship) -> None:
 # HELPER FUNCTIONS
 # ============================================================================
 
-def get_jira_identity_id(person_id: str) -> str:
-    """
-    Convert a person_id to the corresponding Jira IdentityMapping ID.
-    
-    Args:
-        person_id: Person node ID (e.g., 'person_john_doe')
-    
-    Returns:
-        Jira IdentityMapping ID (e.g., 'identity_jira_person_john_doe')
-    """
-    return f"identity_jira_{person_id}"
+

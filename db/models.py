@@ -641,17 +641,30 @@ def merge_person(session: Session, person: Person, relationships: Optional[List[
     props = person.to_neo4j_properties()
     
     # MERGE the Person node
-    query = """
-    MERGE (p:Person {id: $id})
-    SET p.name = $name,
-        p.email = $email,
-        p.title = $title,
-        p.role = $role,
-        p.seniority = $seniority,
-        p.hire_date = date($hire_date),
-        p.is_manager = $is_manager
-    RETURN p
-    """
+    # Handle optional hire_date - only set if not empty
+    if props.get('hire_date'):
+        query = """
+        MERGE (p:Person {id: $id})
+        SET p.name = $name,
+            p.email = $email,
+            p.title = $title,
+            p.role = $role,
+            p.seniority = $seniority,
+            p.hire_date = date($hire_date),
+            p.is_manager = $is_manager
+        RETURN p
+        """
+    else:
+        query = """
+        MERGE (p:Person {id: $id})
+        SET p.name = $name,
+            p.email = $email,
+            p.title = $title,
+            p.role = $role,
+            p.seniority = $seniority,
+            p.is_manager = $is_manager
+        RETURN p
+        """
     
     session.run(query, **props)
     

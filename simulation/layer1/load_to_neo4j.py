@@ -2,7 +2,7 @@
 Layer 1 Neo4j Loader: Load People & Teams data into Neo4j
 Reads the generated JSON and creates nodes and relationships in Neo4j.
 """
-
+import sys
 import json
 import os
 import traceback
@@ -191,7 +191,7 @@ def main():
     neo4j_password = os.getenv('NEO4J_PASSWORD', 'password')
     
     # Read data file
-    data_path = "../data/layer1_people_teams.json"
+    data_path = "simulation/data/layer1_people_teams.json"
     print(f"\nReading data from {data_path}...")
     
     try:

@@ -10,13 +10,14 @@ import json
 import os
 from pathlib import Path
 from github import Github
-from datetime import datetime
+from neo4j import GraphDatabase
+from db.models import Person, IdentityMapping, Relationship, merge_person, merge_identity_mapping
 
 
 def load_config():
     """Load repository configuration from .config.json"""
     config_path = Path(__file__).parent / ".config.json"
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
@@ -60,7 +61,60 @@ def map_permissions_to_general(permissions):
     return "READ"
 
 
-def extract_repo_info(repo):
+def new_user_handler(session, collaborator):
+    """
+    Handle a new user collaborator by creating Person and IdentityMapping nodes.
+    
+    Args:
+        session: Neo4j session
+        collaborator: GitHub collaborator object with attributes like login, name, email, type
+    """
+    try:
+        # Extract available information from collaborator
+        github_login = collaborator.login
+        github_name = collaborator.name if hasattr(collaborator, 'name') and collaborator.name else github_login
+        github_email = collaborator.email if hasattr(collaborator, 'email') and collaborator.email else ""
+        
+        # Create Person node (prefix with person_github_ for global uniqueness)
+        # Eg: A GitHub user "alice" and a Jira user "alice" could be actually different people
+        person_id = f"person_github_{github_login}"
+        person = Person(
+            id=person_id,
+            name=github_name,
+            email=github_email,
+            title="",
+            role="",
+            seniority="",
+            hire_date="",
+            is_manager=False
+        )
+        
+        # Create IdentityMapping node
+        identity = IdentityMapping(
+            id=f"identity_github_{github_login}",
+            provider="GitHub",
+            username=github_login,
+            email=github_email
+        )
+        
+        # Create MAPS_TO relationship from IdentityMapping to Person
+        relationship = Relationship(
+            type="MAPS_TO",
+            from_id=identity.id,
+            to_id=person_id,
+            from_type="IdentityMapping",
+            to_type="Person"
+        )
+        
+        # Merge into Neo4j (MERGE handles deduplication)
+        merge_person(session, person)
+        merge_identity_mapping(session, identity, relationships=[relationship])
+        
+    except Exception as e:
+        print(f"    Warning: Failed to create Person/IdentityMapping for {collaborator.login}: {str(e)}")
+
+
+def extract_repo_info(repo, session):
     """Extract relevant repository information including collaborators and teams"""
     repo_info = {
         "id": f"repo_{repo.name.replace('-', '_')}",
@@ -72,27 +126,18 @@ def extract_repo_info(repo):
         "description": repo.description or "",
         "topics": repo.get_topics(),
         "created_at": repo.created_at.strftime("%Y-%m-%d") if repo.created_at else None,
-        "collaborators": [],
         "teams": []
     }
     
-    # Fetch collaborators
+    # Process collaborators
     try:
         collaborators = repo.get_collaborators()
-        repo_info["collaborators"] = [
-            {
-                "login": collab.login,
-                "name": collab.name or collab.login,
-                "permissions": collab.permissions.__dict__ if hasattr(collab, 'permissions') else {},
-                "general_permission": map_permissions_to_general(
-                    collab.permissions.__dict__ if hasattr(collab, 'permissions') else {}
-                )
-            }
-            for collab in collaborators
-        ]
+        for collab in collaborators:
+            if collab.type == 'User':
+                new_user_handler(session, collab)
     except Exception as e:
         # Collaborators might not be accessible for certain repos
-        repo_info["collaborators_error"] = str(e)
+        print(f"Warning: Could not fetch collaborators - {str(e)}")
     
     # Fetch teams (only available for organization repositories)
     try:
@@ -177,17 +222,6 @@ def print_repo_info(repo_info, indent=""):
     print(f"{indent}Topics:      {', '.join(repo_info['topics']) if repo_info['topics'] else 'None'}")
     print(f"{indent}Created:     {repo_info['created_at']}")
     
-    # Print collaborators
-    if 'collaborators_error' in repo_info:
-        print(f"{indent}Collaborators: Error fetching ({repo_info['collaborators_error']})")
-    else:
-        print(f"{indent}Collaborators: {len(repo_info['collaborators'])}")
-        for collab in repo_info['collaborators']:
-            permissions = collab.get('permissions', {})
-            perm_str = ', '.join([k for k, v in permissions.items() if v]) if permissions else 'N/A'
-            general_perm = collab.get('general_permission', 'N/A')
-            print(f"{indent}  - {collab['name']} (@{collab['login']}) [{perm_str}] -> {general_perm}")
-    
     # Print teams
     if 'teams_error' in repo_info:
         print(f"{indent}Teams:        Error fetching ({repo_info['teams_error']})")
@@ -204,63 +238,83 @@ def main():
     print("GitHub Repository Information Fetcher")
     print("=" * 50)
     
-    # Load configuration
-    config = load_config()
-    print(f"\nLoaded {len(config['repos'])} repositories from config\n")
+    # Initialize Neo4j connection
+    neo4j_uri = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
+    neo4j_user = os.getenv('NEO4J_USERNAME', 'neo4j')
+    neo4j_password = os.getenv('NEO4J_PASSWORD', 'password')
     
-    repositories = []
+    print(f"\nConnecting to Neo4j at {neo4j_uri}...")
+    driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
     
-    # Process each repository
-    for idx, repo_config in enumerate(config['repos'], 1):
-        repo_url = repo_config['url']
-        print(f"\n[{idx}] Processing: {repo_url}")
-        print("-" * 50)
+    try:
+        # Verify connection
+        driver.verify_connectivity()
+        print("✓ Neo4j connection established\n")
         
-        try:
-            # Get GitHub client
-            client = get_github_client(repo_config)
-            
-            # Check if this is a wildcard URL (e.g., https://github.com/owner/*)
-            if is_wildcard_url(repo_url):
-                # Extract owner and enumerate all repos
-                owner, _ = parse_repo_url(repo_url)
-                print(f"Wildcard pattern detected. Fetching all repositories for: {owner}")
+        # Load configuration
+        config = load_config()
+        print(f"Loaded {len(config['repos'])} repositories from config\n")
+        
+        repositories = []
+        
+        # Create a session for the entire operation
+        with driver.session() as session:
+            # Process each repository
+            for idx, repo_config in enumerate(config['repos'], 1):
+                repo_url = repo_config['url']
+                print(f"\n[{idx}] Processing: {repo_url}")
+                print("-" * 50)
                 
-                repos = get_all_repos_for_owner(client, owner)
-                
-                for repo in repos:
-                    try:
+                try:
+                    # Get GitHub client
+                    client = get_github_client(repo_config)
+                    
+                    # Check if this is a wildcard URL (e.g., https://github.com/owner/*)
+                    if is_wildcard_url(repo_url):
+                        # Extract owner and enumerate all repos
+                        owner, _ = parse_repo_url(repo_url)
+                        print(f"Wildcard pattern detected. Fetching all repositories for: {owner}")
+                        
+                        repos = get_all_repos_for_owner(client, owner)
+                        
+                        for repo in repos:
+                            try:
+                                # Extract information
+                                repo_info = extract_repo_info(repo, session)
+                                repositories.append(repo_info)
+                                
+                                # Print repository information
+                                print(f"\n  ↳ {repo_info['name']}")
+                                print_repo_info(repo_info, indent="    ")
+                                
+                            except Exception as e:
+                                print(f"    ✗ Error processing {repo.name}: {str(e)}")
+                                continue
+                                
+                    else:
+                        # Single repository
+                        # Parse URL and get repository
+                        owner, repo_name = parse_repo_url(repo_url)
+                        repo = client.get_repo(f"{owner}/{repo_name}")
+                        
                         # Extract information
-                        repo_info = extract_repo_info(repo)
+                        repo_info = extract_repo_info(repo, session)
                         repositories.append(repo_info)
                         
                         # Print repository information
-                        print(f"\n  ↳ {repo_info['name']}")
-                        print_repo_info(repo_info, indent="    ")
-                        
-                    except Exception as e:
-                        print(f"    ✗ Error processing {repo.name}: {str(e)}")
-                        continue
-                        
-            else:
-                # Single repository
-                # Parse URL and get repository
-                owner, repo_name = parse_repo_url(repo_url)
-                repo = client.get_repo(f"{owner}/{repo_name}")
-                
-                # Extract information
-                repo_info = extract_repo_info(repo)
-                repositories.append(repo_info)
-                
-                # Print repository information
-                print_repo_info(repo_info)
-            
-        except Exception as e:
-            print(f"✗ Error: {str(e)}")
-            continue
-    
-    print("\n" + "=" * 50)
-    print(f"\nTotal repositories processed: {len(repositories)}/{len(config['repos'])}")
+                        print_repo_info(repo_info)
+                    
+                except Exception as e:
+                    print(f"✗ Error: {str(e)}")
+                    continue
+        
+        print("\n" + "=" * 50)
+        print(f"\nTotal repositories processed: {len(repositories)}/{len(config['repos'])}")
+        
+    finally:
+        # Close Neo4j connection
+        driver.close()
+        print("\n✓ Neo4j connection closed")
 
 
 if __name__ == "__main__":

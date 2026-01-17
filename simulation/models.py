@@ -340,6 +340,90 @@ class Branch:
         return asdict(self)
 
 
+@dataclass
+class Commit:
+    """Commit node representing a Git commit.
+    
+    Example:
+        commit = Commit(
+            id="commit_1",
+            sha="a1b2c3d4e5f6789...",
+            message="[PROJ-123] Fix authentication bug",
+            timestamp="2026-01-15T14:30:00",
+            additions=45,
+            deletions=12,
+            files_changed=3
+        )
+        
+        # Relationships
+        part_of_rel = Relationship(
+            type="PART_OF",
+            from_id=commit.id,
+            to_id="branch_main_repo_api",
+            from_type="Commit",
+            to_type="Branch"
+        )
+        
+        authored_by_rel = Relationship(
+            type="AUTHORED_BY",
+            from_id=commit.id,
+            to_id="person_alice",
+            from_type="Commit",
+            to_type="Person"
+        )
+        
+        modifies_rel = Relationship(
+            type="MODIFIES",
+            from_id=commit.id,
+            to_id="file_42",
+            from_type="Commit",
+            to_type="File",
+            properties={"additions": 25, "deletions": 8}
+        )
+    """
+    id: str
+    sha: str
+    message: str
+    timestamp: str   # ISO format datetime string
+    additions: int
+    deletions: int
+    files_changed: int
+    
+    def to_neo4j_properties(self) -> Dict[str, Any]:
+        """Convert to Neo4j properties."""
+        return asdict(self)
+
+
+@dataclass
+class File:
+    """File node representing a file in a repository.
+    
+    Example:
+        file = File(
+            id="file_42",
+            path="src/services/UserService.ts",
+            name="UserService.ts",
+            extension=".ts",
+            language="TypeScript",
+            is_test=False,
+            size=3420,
+            created_at="2025-10-11T09:00:00"
+        )
+    """
+    id: str
+    path: str
+    name: str
+    extension: str
+    language: str
+    is_test: bool
+    size: int
+    created_at: str  # ISO format datetime string
+    
+    def to_neo4j_properties(self) -> Dict[str, Any]:
+        """Convert to Neo4j properties."""
+        return asdict(self)
+
+
 # ============================================================================
 # RELATIONSHIP DATACLASS
 # ============================================================================
@@ -390,6 +474,12 @@ BIDIRECTIONAL_RELATIONSHIPS = {
     
     # Layer 6
     "BRANCH_OF": "BRANCH_OF",        # Branch ↔ Repository
+    
+    # Layer 7
+    "PART_OF": "CONTAINS",           # Commit → Branch / Branch ← Commit (note: PART_OF used in other layers too)
+    "AUTHORED_BY": "AUTHORED_BY",    # Commit ↔ Person
+    "MODIFIES": "MODIFIED_BY",       # Commit → File (modifies) / File ← Commit (modified by) - with properties
+    "REFERENCES": "REFERENCED_BY",   # Commit → Issue (references) / Issue ← Commit (referenced by)
 }
 
 
@@ -427,6 +517,11 @@ def create_constraints(session: Session, layers: Optional[List[int]] = None) -> 
         ],
         6: [
             "CREATE CONSTRAINT branch_id IF NOT EXISTS FOR (b:Branch) REQUIRE b.id IS UNIQUE"
+        ],
+        7: [
+            "CREATE CONSTRAINT commit_id IF NOT EXISTS FOR (c:Commit) REQUIRE c.id IS UNIQUE",
+            "CREATE CONSTRAINT commit_sha IF NOT EXISTS FOR (c:Commit) REQUIRE c.sha IS UNIQUE",
+            "CREATE CONSTRAINT file_id IF NOT EXISTS FOR (f:File) REQUIRE f.id IS UNIQUE"
         ]
     }
     
@@ -769,6 +864,73 @@ def merge_branch(session: Session, branch: Branch, relationships: Optional[List[
         b.last_commit_timestamp = datetime($last_commit_timestamp),
         b.created_at = datetime($created_at)
     RETURN b
+    """
+    
+    session.run(query, **props)
+    
+    # Create relationships if provided
+    if relationships:
+        for rel in relationships:
+            merge_relationship(session, rel)
+
+
+# ============================================================================
+# LAYER 7 MERGE FUNCTIONS
+# ============================================================================
+
+def merge_commit(session: Session, commit: Commit, relationships: Optional[List[Relationship]] = None) -> None:
+    """
+    Merge a Commit node into Neo4j.
+    
+    Args:
+        session: Neo4j session
+        commit: Commit dataclass instance
+        relationships: Optional list of relationships to create
+    """
+    props = commit.to_neo4j_properties()
+    
+    # MERGE the Commit node
+    query = """
+    MERGE (c:Commit {id: $id})
+    SET c.sha = $sha,
+        c.message = $message,
+        c.timestamp = datetime($timestamp),
+        c.additions = $additions,
+        c.deletions = $deletions,
+        c.files_changed = $files_changed
+    RETURN c
+    """
+    
+    session.run(query, **props)
+    
+    # Create relationships if provided
+    if relationships:
+        for rel in relationships:
+            merge_relationship(session, rel)
+
+
+def merge_file(session: Session, file: File, relationships: Optional[List[Relationship]] = None) -> None:
+    """
+    Merge a File node into Neo4j.
+    
+    Args:
+        session: Neo4j session
+        file: File dataclass instance
+        relationships: Optional list of relationships to create
+    """
+    props = file.to_neo4j_properties()
+    
+    # MERGE the File node
+    query = """
+    MERGE (f:File {id: $id})
+    SET f.path = $path,
+        f.name = $name,
+        f.extension = $extension,
+        f.language = $language,
+        f.is_test = $is_test,
+        f.size = $size,
+        f.created_at = datetime($created_at)
+    RETURN f
     """
     
     session.run(query, **props)

@@ -1,0 +1,303 @@
+"""
+Neo4j Models and Utilities for Project Graph
+Provides dataclasses for nodes and utility functions for merging into Neo4j.
+"""
+
+from dataclasses import dataclass, asdict, field
+from typing import Optional, List, Dict, Any
+from neo4j import Session
+
+
+@dataclass
+class Person:
+    """Person node in the organizational graph."""
+    id: str
+    name: str
+    email: str
+    title: str
+    role: str
+    seniority: str
+    hire_date: str  # ISO format string (YYYY-MM-DD)
+    is_manager: bool
+    
+    def to_neo4j_properties(self) -> Dict[str, Any]:
+        """Convert to Neo4j properties with proper type conversion."""
+        props = asdict(self)
+        return props
+
+
+@dataclass
+class Team:
+    """Team node in the organizational graph."""
+    id: str
+    name: str
+    focus_area: str
+    target_size: int
+    created_at: str  # ISO format string (YYYY-MM-DD)
+    
+    def to_neo4j_properties(self) -> Dict[str, Any]:
+        """Convert to Neo4j properties with proper type conversion."""
+        return asdict(self)
+
+
+@dataclass
+class IdentityMapping:
+    """Identity mapping node linking external provider identities to Person.
+    
+    This represents an external identity (GitHub, Jira, etc.) that maps to a Person.
+    Multiple IdentityMapping nodes can point to the same Person via MAPS_TO relationships.
+    
+    Note: The 'person_id' field is NOT part of this dataclass. In batch loading scenarios
+    where JSON includes person_id, that field should be extracted separately and used to
+    create the MAPS_TO relationship.
+    
+    Example:
+        identity = IdentityMapping(
+            id="identity_github_alice",
+            provider="GitHub",
+            username="alicej",
+            email="alice@company.com"
+        )
+        
+        rel = Relationship(
+            type="MAPS_TO",
+            from_id=identity.id,
+            to_id="person_alice",  # This is the person_id
+            from_type="IdentityMapping",
+            to_type="Person"
+        )
+        
+        merge_identity_mapping(session, identity, relationships=[rel])
+    """
+    id: str
+    provider: str
+    username: str
+    email: str
+    
+    def to_neo4j_properties(self) -> Dict[str, Any]:
+        """Convert to Neo4j properties."""
+        return asdict(self)
+
+
+@dataclass
+class Relationship:
+    """Represents a relationship between two nodes."""
+    type: str
+    from_id: str
+    to_id: str
+    from_type: str
+    to_type: str
+    properties: Dict[str, Any] = field(default_factory=dict)
+
+
+# Bidirectional relationship mappings
+BIDIRECTIONAL_RELATIONSHIPS = {
+    "MEMBER_OF": "MEMBER_OF",  # Person ↔ Team
+    "REPORTS_TO": "MANAGES",    # Person → Person (reports to) / Person ← Person (manages)
+    "MANAGES": "MANAGED_BY",    # Person → Team (manages) / Team ← Person (managed by)
+    "MAPS_TO": "MAPS_TO"        # IdentityMapping ↔ Person
+}
+
+
+def create_constraints(session: Session) -> None:
+    """Create uniqueness constraints for all node types."""
+    constraints = [
+        "CREATE CONSTRAINT person_id IF NOT EXISTS FOR (p:Person) REQUIRE p.id IS UNIQUE",
+        "CREATE CONSTRAINT team_id IF NOT EXISTS FOR (t:Team) REQUIRE t.id IS UNIQUE",
+        "CREATE CONSTRAINT identity_id IF NOT EXISTS FOR (i:IdentityMapping) REQUIRE i.id IS UNIQUE"
+    ]
+    
+    for constraint in constraints:
+        try:
+            session.run(constraint)
+        except Exception as e:
+            if "already exists" not in str(e).lower():
+                raise
+
+
+def merge_person(session: Session, person: Person, relationships: Optional[List[Relationship]] = None) -> None:
+    """
+    Merge a Person node into Neo4j.
+    
+    Args:
+        session: Neo4j session
+        person: Person dataclass instance
+        relationships: Optional list of relationships to create
+    """
+    props = person.to_neo4j_properties()
+    
+    # MERGE the Person node
+    query = """
+    MERGE (p:Person {id: $id})
+    SET p.name = $name,
+        p.email = $email,
+        p.title = $title,
+        p.role = $role,
+        p.seniority = $seniority,
+        p.hire_date = date($hire_date),
+        p.is_manager = $is_manager
+    RETURN p
+    """
+    
+    session.run(query, **props)
+    
+    # Create relationships if provided
+    if relationships:
+        for rel in relationships:
+            merge_relationship(session, rel)
+
+
+def merge_team(session: Session, team: Team, relationships: Optional[List[Relationship]] = None) -> None:
+    """
+    Merge a Team node into Neo4j.
+    
+    Args:
+        session: Neo4j session
+        team: Team dataclass instance
+        relationships: Optional list of relationships to create
+    """
+    props = team.to_neo4j_properties()
+    
+    # MERGE the Team node
+    query = """
+    MERGE (t:Team {id: $id})
+    SET t.name = $name,
+        t.focus_area = $focus_area,
+        t.target_size = $target_size,
+        t.created_at = date($created_at)
+    RETURN t
+    """
+    
+    session.run(query, **props)
+    
+    # Create relationships if provided
+    if relationships:
+        for rel in relationships:
+            merge_relationship(session, rel)
+
+
+def merge_identity_mapping(session: Session, identity: IdentityMapping, relationships: Optional[List[Relationship]] = None) -> None:
+    """
+    Merge an IdentityMapping node into Neo4j.
+    
+    Args:
+        session: Neo4j session
+        identity: IdentityMapping dataclass instance
+        relationships: Optional list of relationships to create
+    """
+    props = identity.to_neo4j_properties()
+    
+    # MERGE the IdentityMapping node
+    query = """
+    MERGE (i:IdentityMapping {id: $id})
+    SET i.provider = $provider,
+        i.username = $username,
+        i.email = $email
+    RETURN i
+    """
+    
+    session.run(query, **props)
+    
+    # Create relationships if provided
+    if relationships:
+        for rel in relationships:
+            merge_relationship(session, rel)
+
+
+def merge_relationship(session: Session, relationship: Relationship) -> None:
+    """
+    Merge a relationship between two nodes, creating nodes if they don't exist.
+    Automatically creates bidirectional relationships where applicable.
+    
+    Args:
+        session: Neo4j session
+        relationship: Relationship dataclass instance
+    """
+    rel_type = relationship.type
+    from_id = relationship.from_id
+    to_id = relationship.to_id
+    from_type = relationship.from_type
+    to_type = relationship.to_type
+    props = relationship.properties
+    
+    # Build property string for Cypher
+    props_str = ""
+    if props:
+        props_items = [f"{k}: ${k}" for k in props.keys()]
+        props_str = "{" + ", ".join(props_items) + "}"
+    
+    # Create the forward relationship
+    forward_query = f"""
+    MERGE (from:{from_type} {{id: $from_id}})
+    MERGE (to:{to_type} {{id: $to_id}})
+    MERGE (from)-[r:{rel_type} {props_str}]->(to)
+    RETURN r
+    """
+    
+    params = {
+        "from_id": from_id,
+        "to_id": to_id,
+        **props
+    }
+    
+    session.run(forward_query, **params)
+    
+    # Create the bidirectional relationship if applicable
+    if rel_type in BIDIRECTIONAL_RELATIONSHIPS:
+        reverse_type = BIDIRECTIONAL_RELATIONSHIPS[rel_type]
+        
+        # Special case: MEMBER_OF is symmetric (same relationship type both ways)
+        if rel_type == "MEMBER_OF" and reverse_type == "MEMBER_OF":
+            reverse_query = f"""
+            MERGE (from:{to_type} {{id: $to_id}})
+            MERGE (to:{from_type} {{id: $from_id}})
+            MERGE (from)-[r:{reverse_type} {props_str}]->(to)
+            RETURN r
+            """
+        # Special case: MAPS_TO is symmetric
+        elif rel_type == "MAPS_TO" and reverse_type == "MAPS_TO":
+            reverse_query = f"""
+            MERGE (from:{to_type} {{id: $to_id}})
+            MERGE (to:{from_type} {{id: $from_id}})
+            MERGE (from)-[r:{reverse_type} {props_str}]->(to)
+            RETURN r
+            """
+        else:
+            # Asymmetric bidirectional (REPORTS_TO → MANAGES, MANAGES → MANAGED_BY)
+            reverse_query = f"""
+            MERGE (from:{to_type} {{id: $to_id}})
+            MERGE (to:{from_type} {{id: $from_id}})
+            MERGE (from)-[r:{reverse_type} {props_str}]->(to)
+            RETURN r
+            """
+        
+        session.run(reverse_query, **params)
+
+
+def merge_node(session: Session, node_type: str, node_data: Dict[str, Any], 
+               relationships: Optional[List[Dict[str, Any]]] = None) -> None:
+    """
+    Generic merge function that routes to specific merge functions based on node type.
+    
+    Args:
+        session: Neo4j session
+        node_type: Type of node ('Person', 'Team', 'IdentityMapping')
+        node_data: Dictionary with node properties
+        relationships: Optional list of relationship dictionaries
+    """
+    # Convert relationship dicts to Relationship objects if provided
+    rel_objects = None
+    if relationships:
+        rel_objects = [Relationship(**rel) for rel in relationships]
+    
+    if node_type == "Person":
+        person = Person(**node_data)
+        merge_person(session, person, rel_objects)
+    elif node_type == "Team":
+        team = Team(**node_data)
+        merge_team(session, team, rel_objects)
+    elif node_type == "IdentityMapping":
+        identity = IdentityMapping(**node_data)
+        merge_identity_mapping(session, identity, rel_objects)
+    else:
+        raise ValueError(f"Unknown node type: {node_type}")

@@ -9,6 +9,11 @@ import sys
 import traceback
 
 from neo4j import GraphDatabase
+from models import (
+    Person, Team, IdentityMapping, Relationship,
+    merge_person, merge_team, merge_identity_mapping, merge_relationship,
+    create_constraints
+)
 
 class Layer1Loader:
     def __init__(self, uri: str, user: str, password: str):
@@ -29,138 +34,91 @@ class Layer1Loader:
     def create_constraints(self):
         """Create uniqueness constraints for node IDs."""
         with self.driver.session() as session:
-            constraints = [
-                "CREATE CONSTRAINT person_id IF NOT EXISTS FOR (p:Person) REQUIRE p.id IS UNIQUE",
-                "CREATE CONSTRAINT team_id IF NOT EXISTS FOR (t:Team) REQUIRE t.id IS UNIQUE",
-                "CREATE CONSTRAINT identity_id IF NOT EXISTS FOR (i:IdentityMapping) REQUIRE i.id IS UNIQUE"
-            ]
-            
             print("\nCreating constraints...")
-            for constraint in constraints:
-                try:
-                    session.run(constraint)
-                    print(f"   ✓ {constraint.split('(')[1].split(')')[0]}")
-                except Exception as e:
-                    if "already exists" in str(e):
-                        print(f"   - {constraint.split('(')[1].split(')')[0]} (already exists)")
-                    else:
-                        raise
+            create_constraints(session)
+            print("   ✓ Constraints created/verified")
     
     def load_people(self, people: list):
-        """Load Person nodes into Neo4j."""
+        """Load Person nodes into Neo4j one at a time."""
         with self.driver.session() as session:
             print(f"\nLoading {len(people)} people...")
             
-            query = """
-            UNWIND $people AS person
-            CREATE (p:Person {
-                id: person.id,
-                name: person.name,
-                email: person.email,
-                title: person.title,
-                role: person.role,
-                seniority: person.seniority,
-                hire_date: date(person.hire_date),
-                is_manager: person.is_manager
-            })
-            """
+            for person_data in people:
+                person = Person(**person_data)
+                merge_person(session, person)
             
-            result = session.run(query, people=people)
-            summary = result.consume()
-            print(f"   ✓ Created {summary.counters.nodes_created} Person nodes")
+            print(f"   ✓ Merged {len(people)} Person nodes")
     
     def load_teams(self, teams: list):
-        """Load Team nodes into Neo4j."""
+        """Load Team nodes into Neo4j one at a time."""
         with self.driver.session() as session:
             print(f"\nLoading {len(teams)} teams...")
             
-            query = """
-            UNWIND $teams AS team
-            CREATE (t:Team {
-                id: team.id,
-                name: team.name,
-                focus_area: team.focus_area,
-                target_size: team.target_size,
-                created_at: date(team.created_at)
-            })
-            """
+            for team_data in teams:
+                team = Team(**team_data)
+                merge_team(session, team)
             
-            result = session.run(query, teams=teams)
-            summary = result.consume()
-            print(f"   ✓ Created {summary.counters.nodes_created} Team nodes")
+            print(f"   ✓ Merged {len(teams)} Team nodes")
     
     def load_identity_mappings(self, mappings: list):
-        """Load IdentityMapping nodes into Neo4j."""
+        """Load IdentityMapping nodes into Neo4j one at a time."""
         with self.driver.session() as session:
             print(f"\nLoading {len(mappings)} identity mappings...")
             
-            query = """
-            UNWIND $mappings AS mapping
-            CREATE (i:IdentityMapping {
-                id: mapping.id,
-                provider: mapping.provider,
-                username: mapping.username,
-                email: mapping.email
-            })
-            """
+            for mapping_data in mappings:
+                # Extract person_id for relationship, not part of IdentityMapping node
+                person_id = mapping_data.pop('person_id', None)
+                
+                identity = IdentityMapping(**mapping_data)
+                
+                # Create relationship to Person if person_id exists
+                relationships = []
+                if person_id:
+                    relationships.append(Relationship(
+                        type="MAPS_TO",
+                        from_id=identity.id,
+                        to_id=person_id,
+                        from_type="IdentityMapping",
+                        to_type="Person"
+                    ))
+                
+                merge_identity_mapping(session, identity, relationships=relationships)
             
-            result = session.run(query, mappings=mappings)
-            summary = result.consume()
-            print(f"   ✓ Created {summary.counters.nodes_created} IdentityMapping nodes")
+            print(f"   ✓ Merged {len(mappings)} IdentityMapping nodes")
     
     def load_relationships(self, relationships: list):
-        """Load all relationships into Neo4j."""
+        """Load all relationships into Neo4j one at a time."""
         with self.driver.session() as session:
             print(f"\nLoading {len(relationships)} relationships...")
             
             # Group by relationship type for better reporting
             rel_counts = {}
+            skipped_count = 0
             
-            for rel in relationships:
-                rel_type = rel['type']
+            for rel_data in relationships:
+                rel_type = rel_data['type']
+                
+                # Skip MAPS_TO relationships as they're handled in load_identity_mappings
+                if rel_type == "MAPS_TO":
+                    skipped_count += 1
+                    continue
+                
                 if rel_type not in rel_counts:
                     rel_counts[rel_type] = 0
                 
-                # Create relationship based on type (with bidirectional relationships)
-                if rel_type == "MEMBER_OF":
-                    query = """
-                    MATCH (p:Person {id: $from_id})
-                    MATCH (t:Team {id: $to_id})
-                    CREATE (p)-[:MEMBER_OF]->(t)
-                    CREATE (t)-[:MEMBER_OF]->(p)
-                    """
-                elif rel_type == "REPORTS_TO":
-                    query = """
-                    MATCH (p1:Person {id: $from_id})
-                    MATCH (p2:Person {id: $to_id})
-                    CREATE (p1)-[:REPORTS_TO]->(p2)
-                    CREATE (p2)-[:MANAGES]->(p1)
-                    """
-                elif rel_type == "MANAGES":
-                    query = """
-                    MATCH (p:Person {id: $from_id})
-                    MATCH (t:Team {id: $to_id})
-                    CREATE (p)-[:MANAGES]->(t)
-                    CREATE (t)-[:MANAGED_BY]->(p)
-                    """
-                elif rel_type == "MAPS_TO":
-                    query = """
-                    MATCH (i:IdentityMapping {id: $from_id})
-                    MATCH (p:Person {id: $to_id})
-                    CREATE (i)-[:MAPS_TO]->(p)
-                    CREATE (p)-[:MAPS_TO]->(i)
-                    """
-                else:
-                    print(f"   ⚠️  Unknown relationship type: {rel_type}")
-                    continue
+                # Create Relationship object and merge
+                relationship = Relationship(**rel_data)
+                merge_relationship(session, relationship)
                 
-                result = session.run(query, from_id=rel['from_id'], to_id=rel['to_id'])
-                summary = result.consume()
-                rel_counts[rel_type] += summary.counters.relationships_created
+                # Count bidirectional relationships as 2
+                rel_counts[rel_type] = rel_counts.get(rel_type, 0) + 2
             
             # Report results
             for rel_type, count in rel_counts.items():
-                print(f"   ✓ {rel_type}: {count}")
+                print(f"   ✓ {rel_type}: {count} (includes bidirectional)")
+            
+            if skipped_count > 0:
+                print(f"   - Skipped {skipped_count} MAPS_TO relationships (handled separately)")
     
     def run_validation_queries(self):
         """Run validation queries from the simulation plan."""

@@ -1,5 +1,227 @@
 # Layer 1: People & Teams Foundation
 
+This layer provides the foundational data model for people, teams, and identity mappings.
+
+## Files
+
+- **`models.py`**: Data classes and utility functions for Neo4j operations
+  - `Person`, `Team`, `IdentityMapping` dataclasses
+  - `merge_person()`, `merge_team()`, `merge_identity_mapping()` - merge individual nodes
+  - `merge_relationship()` - merge relationships with auto-creation of missing nodes
+  - `create_constraints()` - create uniqueness constraints
+  
+- **`generate_data.py`**: Simulation data generator (creates JSON file)
+- **`load_to_neo4j.py`**: Batch loader that reads JSON and loads into Neo4j
+- **`example_usage.py`**: Examples of using the refactored utilities for real-world scenarios
+
+## Architecture
+
+### Data Classes
+
+```python
+@dataclass
+class Person:
+    id: str
+    name: str
+    email: str
+    title: str
+    role: str
+    seniority: str
+    hire_date: str  # ISO format
+    is_manager: bool
+
+@dataclass
+class Team:
+    id: str
+    name: str
+    focus_area: str
+    target_size: int
+    created_at: str  # ISO format
+
+@dataclass
+class IdentityMapping:
+    id: str
+    provider: str
+    username: str
+    email: str
+
+@dataclass
+class Relationship:
+    type: str
+    from_id: str
+    to_id: str
+    from_type: str
+    to_type: str
+    properties: Dict[str, Any] = field(default_factory=dict)
+```
+
+### Utility Functions
+
+#### Merge Individual Nodes
+
+```python
+from models import Person, merge_person
+
+# Merge a person without relationships
+person = Person(
+    id="person_john_doe",
+    name="John Doe",
+    email="john.doe@company.com",
+    title="Software Engineer",
+    role="Engineer",
+    seniority="Mid",
+    hire_date="2024-01-15",
+    is_manager=False
+)
+
+with driver.session() as session:
+    merge_person(session, person)
+```
+
+#### Merge Nodes with Relationships
+
+```python
+from models import Person, Relationship, merge_person
+
+# Merge a person with team relationship
+person = Person(...)
+
+member_rel = Relationship(
+    type="MEMBER_OF",
+    from_id=person.id,
+    to_id="team_engineering",
+    from_type="Person",
+    to_type="Team"
+)
+
+with driver.session() as session:
+    merge_person(session, person, relationships=[member_rel])
+```
+
+#### Add Relationships Later
+
+```python
+from models import Relationship, merge_relationship
+
+# Create relationship between existing nodes
+# If nodes don't exist, they will be auto-created
+reports_rel = Relationship(
+    type="REPORTS_TO",
+    from_id="person_alice",
+    to_id="person_bob",
+    from_type="Person",
+    to_type="Person"
+)
+
+with driver.session() as session:
+    merge_relationship(session, reports_rel)
+```
+
+### Bidirectional Relationships
+
+The utilities automatically create bidirectional relationships:
+
+- `MEMBER_OF` (Person ↔ Team)
+- `REPORTS_TO` → `MANAGES` (Person reports to Person, Person manages Person)
+- `MANAGES` → `MANAGED_BY` (Person manages Team, Team managed by Person)
+- `MAPS_TO` (IdentityMapping ↔ Person)
+
+### Key Features
+
+1. **MERGE instead of CREATE**: All operations use MERGE to handle duplicates gracefully
+2. **Automatic bidirectional relationships**: No need to create reverse relationships manually
+3. **Auto-create missing nodes**: Relationships will create placeholder nodes if they don't exist
+4. **Single-node operations**: Perfect for streaming data or API responses
+5. **Flexible relationship handling**: Add relationships during node creation or separately
+
+## Usage Patterns
+
+### Pattern 1: Batch Processing (Simulation)
+
+```python
+# Load from JSON file (as in load_to_neo4j.py)
+with open('data.json') as f:
+    data = json.load(f)
+
+with driver.session() as session:
+    for person_data in data['nodes']['people']:
+        person = Person(**person_data)
+        merge_person(session, person)
+```
+
+### Pattern 2: Real-time API Integration
+
+```python
+# Process data as it arrives from an API
+def handle_new_employee(employee_data):
+    with driver.session() as session:
+        person = Person(**employee_data)
+        
+        # Add team relationship if available
+        if 'team_id' in employee_data:
+            rel = Relationship(
+                type="MEMBER_OF",
+                from_id=person.id,
+                to_id=employee_data['team_id'],
+                from_type="Person",
+                to_type="Team"
+            )
+            merge_person(session, person, relationships=[rel])
+        else:
+            merge_person(session, person)
+```
+
+### Pattern 3: Incremental Updates
+
+```python
+# Update person details and add relationships incrementally
+with driver.session() as session:
+    # Step 1: Add basic person info
+    person = Person(...)
+    merge_person(session, person)
+    
+    # Step 2: Later, add team assignment
+    team_rel = Relationship(...)
+    merge_relationship(session, team_rel)
+    
+    # Step 3: Even later, add manager relationship
+    reports_rel = Relationship(...)
+    merge_relationship(session, reports_rel)
+```
+
+## Running the Simulation
+
+### Generate Data
+```bash
+python generate_data.py
+```
+
+This generates `../data/layer1_people_teams.json` containing all nodes and relationships.
+
+**Note on Identity Mappings**: The generated JSON includes a `person_id` field in identity mappings to indicate which person they belong to. This field is NOT part of the `IdentityMapping` node - it's used during loading to create the `MAPS_TO` relationship. The loader extracts this field and creates the relationship automatically.
+
+### Load into Neo4j
+```bash
+export NEO4J_URI=bolt://localhost:7687
+export NEO4J_USERNAME=neo4j
+export NEO4J_PASSWORD=your_password
+
+python load_to_neo4j.py
+```
+
+The loader:
+1. Creates constraints for unique IDs
+2. Merges Person nodes
+3. Merges Team nodes
+4. Merges IdentityMapping nodes and creates MAPS_TO relationships
+5. Creates remaining relationships (MEMBER_OF, REPORTS_TO, MANAGES)
+
+### View Examples
+```bash
+python example_usage.py
+```
+
+
 This layer establishes the organizational structure that serves as the foundation for all subsequent layers.
 
 ## Overview

@@ -301,6 +301,45 @@ class Repository:
         return asdict(self)
 
 
+@dataclass
+class Branch:
+    """Branch node representing a Git branch.
+    
+    Example:
+        branch = Branch(
+            id="branch_main_repo_api",
+            name="main",
+            is_default=True,
+            is_protected=True,
+            is_deleted=False,
+            last_commit_sha="abc123def",
+            last_commit_timestamp="2026-01-17T10:30:00",
+            created_at="2024-01-01T00:00:00"
+        )
+        
+        # BRANCH_OF relationship
+        branch_rel = Relationship(
+            type="BRANCH_OF",
+            from_id=branch.id,
+            to_id="repo_api_gateway",
+            from_type="Branch",
+            to_type="Repository"
+        )
+    """
+    id: str
+    name: str
+    is_default: bool
+    is_protected: bool
+    is_deleted: bool
+    last_commit_sha: str
+    last_commit_timestamp: str  # ISO format datetime string
+    created_at: str             # ISO format datetime string
+    
+    def to_neo4j_properties(self) -> Dict[str, Any]:
+        """Convert to Neo4j properties."""
+        return asdict(self)
+
+
 # ============================================================================
 # RELATIONSHIP DATACLASS
 # ============================================================================
@@ -348,6 +387,9 @@ BIDIRECTIONAL_RELATIONSHIPS = {
     
     # Layer 5
     "COLLABORATOR": "COLLABORATOR",  # Team/Person ↔ Repository (with permission property)
+    
+    # Layer 6
+    "BRANCH_OF": "BRANCH_OF",        # Branch ↔ Repository
 }
 
 
@@ -382,6 +424,9 @@ def create_constraints(session: Session, layers: Optional[List[int]] = None) -> 
         ],
         5: [
             "CREATE CONSTRAINT repository_id IF NOT EXISTS FOR (r:Repository) REQUIRE r.id IS UNIQUE"
+        ],
+        6: [
+            "CREATE CONSTRAINT branch_id IF NOT EXISTS FOR (b:Branch) REQUIRE b.id IS UNIQUE"
         ]
     }
     
@@ -688,6 +733,42 @@ def merge_repository(session: Session, repository: Repository, relationships: Op
         r.topics = $topics,
         r.created_at = date($created_at)
     RETURN r
+    """
+    
+    session.run(query, **props)
+    
+    # Create relationships if provided
+    if relationships:
+        for rel in relationships:
+            merge_relationship(session, rel)
+
+
+# ============================================================================
+# LAYER 6 MERGE FUNCTIONS
+# ============================================================================
+
+def merge_branch(session: Session, branch: Branch, relationships: Optional[List[Relationship]] = None) -> None:
+    """
+    Merge a Branch node into Neo4j.
+    
+    Args:
+        session: Neo4j session
+        branch: Branch dataclass instance
+        relationships: Optional list of relationships to create
+    """
+    props = branch.to_neo4j_properties()
+    
+    # MERGE the Branch node
+    query = """
+    MERGE (b:Branch {id: $id})
+    SET b.name = $name,
+        b.is_default = $is_default,
+        b.is_protected = $is_protected,
+        b.is_deleted = $is_deleted,
+        b.last_commit_sha = $last_commit_sha,
+        b.last_commit_timestamp = datetime($last_commit_timestamp),
+        b.created_at = datetime($created_at)
+    RETURN b
     """
     
     session.run(query, **props)

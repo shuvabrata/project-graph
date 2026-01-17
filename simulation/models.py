@@ -143,6 +143,48 @@ class Initiative:
         return asdict(self)
 
 
+@dataclass
+class Epic:
+    """Epic node representing a Jira Epic.
+    
+    Note: The 'assignee_id', 'team_id', and 'initiative_id' fields are NOT part of this dataclass.
+    They should be extracted from JSON and used to create relationships:
+    - ASSIGNED_TO -> Person
+    - TEAM -> Team
+    - PART_OF -> Initiative
+    
+    Example:
+        epic = Epic(
+            id="epic_plat_1",
+            key="PLAT-1",
+            summary="Migrate to Kubernetes",
+            ...
+        )
+        
+        # Relationships point directly to Person, Team, and Initiative nodes
+        assignee_rel = Relationship(
+            type="ASSIGNED_TO",
+            from_id=epic.id,
+            to_id="person_alice",
+            from_type="Epic",
+            to_type="Person"
+        )
+    """
+    id: str
+    key: str
+    summary: str
+    description: str
+    priority: str
+    status: str
+    start_date: str   # ISO format string (YYYY-MM-DD)
+    due_date: str     # ISO format string (YYYY-MM-DD)
+    created_at: str   # ISO format string (YYYY-MM-DD)
+    
+    def to_neo4j_properties(self) -> Dict[str, Any]:
+        """Convert to Neo4j properties."""
+        return asdict(self)
+
+
 # ============================================================================
 # RELATIONSHIP DATACLASS
 # ============================================================================
@@ -173,6 +215,11 @@ BIDIRECTIONAL_RELATIONSHIPS = {
     "PART_OF": "CONTAINS",          # Initiative → Project / Project ← Initiative
     "ASSIGNED_TO": "ASSIGNED_TO",   # Initiative ↔ Person
     "REPORTED_BY": "REPORTED_BY",   # Initiative ↔ Person
+    
+    # Layer 3
+    # "PART_OF": "CONTAINS",        # Epic → Initiative / Initiative ← Epic (already defined in Layer 2)
+    # "ASSIGNED_TO": "ASSIGNED_TO", # Epic ↔ Person (already defined in Layer 2)
+    "TEAM": "TEAM",                 # Epic ↔ Team
 }
 
 
@@ -197,6 +244,9 @@ def create_constraints(session: Session, layers: Optional[List[int]] = None) -> 
         2: [
             "CREATE CONSTRAINT project_id IF NOT EXISTS FOR (p:Project) REQUIRE p.id IS UNIQUE",
             "CREATE CONSTRAINT initiative_id IF NOT EXISTS FOR (i:Initiative) REQUIRE i.id IS UNIQUE"
+        ],
+        3: [
+            "CREATE CONSTRAINT epic_id IF NOT EXISTS FOR (e:Epic) REQUIRE e.id IS UNIQUE"
         ]
     }
     
@@ -370,6 +420,39 @@ def merge_initiative(session: Session, initiative: Initiative, relationships: Op
         i.due_date = date($due_date),
         i.created_at = date($created_at)
     RETURN i
+    """
+    
+    session.run(query, **props)
+    
+    # Create relationships if provided
+    if relationships:
+        for rel in relationships:
+            merge_relationship(session, rel)
+
+
+def merge_epic(session: Session, epic: Epic, relationships: Optional[List[Relationship]] = None) -> None:
+    """
+    Merge an Epic node into Neo4j.
+    
+    Args:
+        session: Neo4j session
+        epic: Epic dataclass instance
+        relationships: Optional list of relationships to create
+    """
+    props = epic.to_neo4j_properties()
+    
+    # MERGE the Epic node
+    query = """
+    MERGE (e:Epic {id: $id})
+    SET e.key = $key,
+        e.summary = $summary,
+        e.description = $description,
+        e.priority = $priority,
+        e.status = $status,
+        e.start_date = date($start_date),
+        e.due_date = date($due_date),
+        e.created_at = date($created_at)
+    RETURN e
     """
     
     session.run(query, **props)

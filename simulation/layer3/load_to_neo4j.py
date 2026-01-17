@@ -8,7 +8,16 @@ import json
 import os
 import sys
 import traceback
+
+# Add parent directory to path to import shared models
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from neo4j import GraphDatabase
+from models import (
+    Epic, Relationship,
+    merge_epic, merge_relationship,
+    create_constraints
+)
 
 class Layer3Loader:
     def __init__(self, uri: str, user: str, password: str):
@@ -22,20 +31,9 @@ class Layer3Loader:
     def create_constraints(self):
         """Create uniqueness constraints for node IDs."""
         with self.driver.session() as session:
-            constraints = [
-                "CREATE CONSTRAINT epic_id IF NOT EXISTS FOR (e:Epic) REQUIRE e.id IS UNIQUE"
-            ]
-            
             print("\nCreating constraints...")
-            for constraint in constraints:
-                try:
-                    session.run(constraint)
-                    print(f"   ✓ {constraint.split('(')[1].split(')')[0]}")
-                except Exception as e:
-                    if "already exists" in str(e):
-                        print(f"   - {constraint.split('(')[1].split(')')[0]} (already exists)")
-                    else:
-                        raise
+            create_constraints(session, layers=[3])
+            print("   ✓ Constraints created/verified")
     
     def verify_layer1_data(self):
         """Verify that Layer 1 data exists in the database."""
@@ -71,79 +69,85 @@ class Layer3Loader:
             print(f"   ✓ Found {initiative_count} Initiative nodes")
     
     def load_epics(self, epics: list):
-        """Load Epic nodes into Neo4j."""
+        """Load Epic nodes into Neo4j one at a time."""
         with self.driver.session() as session:
             print(f"\nLoading {len(epics)} epics...")
             
-            for epic in epics:
-                query = """
-                CREATE (e:Epic {
-                    id: $id,
-                    key: $key,
-                    summary: $summary,
-                    description: $description,
-                    priority: $priority,
-                    status: $status,
-                    start_date: date($start_date),
-                    due_date: date($due_date),
-                    created_at: date($created_at)
-                })
-                """
+            for epic_data in epics:
+                # Extract relationship IDs
+                assignee_person_id = epic_data.pop('assignee_id', None)
+                team_id = epic_data.pop('team_id', None)
+                initiative_id = epic_data.pop('initiative_id', None)
                 
-                # Remove relationship IDs from params as they're not properties
-                params = {k: v for k, v in epic.items() 
-                         if k not in ['initiative_id', 'assignee_id', 'team_id']}
+                epic = Epic(**epic_data)
                 
-                result = session.run(query, **params)
-                summary = result.consume()
-                print(f"   ✓ Created {epic['key']}: {epic['summary']}")
+                # Create relationships directly to Person, Team, and Initiative nodes
+                relationships = []
+                
+                if assignee_person_id:
+                    relationships.append(Relationship(
+                        type="ASSIGNED_TO",
+                        from_id=epic.id,
+                        to_id=assignee_person_id,
+                        from_type="Epic",
+                        to_type="Person"
+                    ))
+                
+                if team_id:
+                    relationships.append(Relationship(
+                        type="TEAM",
+                        from_id=epic.id,
+                        to_id=team_id,
+                        from_type="Epic",
+                        to_type="Team"
+                    ))
+                
+                if initiative_id:
+                    relationships.append(Relationship(
+                        type="PART_OF",
+                        from_id=epic.id,
+                        to_id=initiative_id,
+                        from_type="Epic",
+                        to_type="Initiative"
+                    ))
+                
+                # Merge epic with relationships
+                merge_epic(session, epic, relationships=relationships)
+                print(f"   ✓ Merged {epic.key}: {epic.summary}")
     
     def load_relationships(self, relationships: list):
-        """Load all relationships into Neo4j."""
+        """Load all relationships into Neo4j one at a time."""
         with self.driver.session() as session:
             print(f"\nLoading {len(relationships)} relationships...")
             
             # Group by relationship type for better reporting
             rel_counts = {}
+            skipped_count = 0
             
-            for rel in relationships:
-                rel_type = rel['type']
+            for rel_data in relationships:
+                rel_type = rel_data['type']
+                
+                # Skip relationships already handled in load_epics
+                if rel_type in ["PART_OF", "ASSIGNED_TO", "TEAM"]:
+                    skipped_count += 1
+                    continue
+                
                 if rel_type not in rel_counts:
                     rel_counts[rel_type] = 0
                 
-                # Create relationship based on type (with bidirectional relationships)
-                if rel_type == "PART_OF":
-                    query = """
-                    MATCH (e:Epic {id: $from_id})
-                    MATCH (i:Initiative {id: $to_id})
-                    CREATE (e)-[:PART_OF]->(i)
-                    CREATE (i)-[:CONTAINS]->(e)
-                    """
-                elif rel_type == "ASSIGNED_TO":
-                    query = """
-                    MATCH (e:Epic {id: $from_id})
-                    MATCH (p:Person {id: $to_id})
-                    CREATE (e)-[:ASSIGNED_TO]->(p)
-                    CREATE (p)-[:ASSIGNED_TO]->(e)
-                    """
-                elif rel_type == "TEAM":
-                    query = """
-                    MATCH (e:Epic {id: $from_id})
-                    MATCH (t:Team {id: $to_id})
-                    CREATE (e)-[:TEAM]->(t)
-                    CREATE (t)-[:TEAM]->(e)
-                    """
-                else:
-                    print(f"   ⚠️  Unknown relationship type: {rel_type}")
-                    continue
+                # Create Relationship object and merge
+                relationship = Relationship(**rel_data)
+                merge_relationship(session, relationship)
                 
-                result = session.run(query, from_id=rel['from_id'], to_id=rel['to_id'])
-                summary = result.consume()
-                rel_counts[rel_type] += summary.counters.relationships_created
+                # Count bidirectional relationships as 2
+                rel_counts[rel_type] = rel_counts.get(rel_type, 0) + 2
             
             # Report results
             for rel_type, count in rel_counts.items():
-                print(f"   ✓ {rel_type}: {count}")
+                print(f"   ✓ {rel_type}: {count} (includes bidirectional)")
+            
+            if skipped_count > 0:
+                print(f"   - Skipped {skipped_count} relationships (handled in load_epics)")
     
     def run_validation_queries(self):
         """Run validation queries from the simulation plan."""

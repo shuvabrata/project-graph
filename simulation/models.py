@@ -256,6 +256,51 @@ class Sprint:
         return asdict(self)
 
 
+@dataclass
+class Repository:
+    """Repository node representing a Git repository.
+    
+    Note: Relationships (COLLABORATOR from Team/Person) are handled separately
+    and may include properties like permission, granted_at, role.
+    
+    Example:
+        repository = Repository(
+            id="repo_api_gateway",
+            name="gateway",
+            full_name="company/gateway",
+            url="https://github.com/company/gateway",
+            language="Python",
+            is_private=True,
+            description="API gateway service",
+            topics=["api", "gateway", "python"],
+            created_at="2023-11-10"
+        )
+        
+        # COLLABORATOR relationships with properties
+        collab_rel = Relationship(
+            type="COLLABORATOR",
+            from_id="team_api_team",
+            to_id=repository.id,
+            from_type="Team",
+            to_type="Repository",
+            properties={"permission": "WRITE", "granted_at": "2023-11-10"}
+        )
+    """
+    id: str
+    name: str
+    full_name: str
+    url: str
+    language: str
+    is_private: bool
+    description: str
+    topics: list     # List of topic strings
+    created_at: str  # ISO format string (YYYY-MM-DD)
+    
+    def to_neo4j_properties(self) -> Dict[str, Any]:
+        """Convert to Neo4j properties."""
+        return asdict(self)
+
+
 # ============================================================================
 # RELATIONSHIP DATACLASS
 # ============================================================================
@@ -300,6 +345,9 @@ BIDIRECTIONAL_RELATIONSHIPS = {
     "BLOCKS": "BLOCKED_BY",         # Issue → Issue (blocks) / Issue ← Issue (blocked by)
     "DEPENDS_ON": "DEPENDENCY_OF",  # Issue → Issue (depends on) / Issue ← Issue (dependency of)
     "RELATES_TO": "RELATES_TO",     # Bug ↔ Story
+    
+    # Layer 5
+    "COLLABORATOR": "COLLABORATOR",  # Team/Person ↔ Repository (with permission property)
 }
 
 
@@ -331,6 +379,9 @@ def create_constraints(session: Session, layers: Optional[List[int]] = None) -> 
         4: [
             "CREATE CONSTRAINT issue_id IF NOT EXISTS FOR (i:Issue) REQUIRE i.id IS UNIQUE",
             "CREATE CONSTRAINT sprint_id IF NOT EXISTS FOR (s:Sprint) REQUIRE s.id IS UNIQUE"
+        ],
+        5: [
+            "CREATE CONSTRAINT repository_id IF NOT EXISTS FOR (r:Repository) REQUIRE r.id IS UNIQUE"
         ]
     }
     
@@ -600,6 +651,43 @@ def merge_sprint(session: Session, sprint: Sprint, relationships: Optional[List[
         s.end_date = date($end_date),
         s.status = $status
     RETURN s
+    """
+    
+    session.run(query, **props)
+    
+    # Create relationships if provided
+    if relationships:
+        for rel in relationships:
+            merge_relationship(session, rel)
+
+
+# ============================================================================
+# LAYER 5 MERGE FUNCTIONS
+# ============================================================================
+
+def merge_repository(session: Session, repository: Repository, relationships: Optional[List[Relationship]] = None) -> None:
+    """
+    Merge a Repository node into Neo4j.
+    
+    Args:
+        session: Neo4j session
+        repository: Repository dataclass instance
+        relationships: Optional list of relationships to create
+    """
+    props = repository.to_neo4j_properties()
+    
+    # MERGE the Repository node
+    query = """
+    MERGE (r:Repository {id: $id})
+    SET r.name = $name,
+        r.full_name = $full_name,
+        r.url = $url,
+        r.language = $language,
+        r.is_private = $is_private,
+        r.description = $description,
+        r.topics = $topics,
+        r.created_at = date($created_at)
+    RETURN r
     """
     
     session.run(query, **props)

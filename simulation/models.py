@@ -424,6 +424,76 @@ class File:
         return asdict(self)
 
 
+@dataclass
+class PullRequest:
+    """PullRequest node representing a GitHub/GitLab pull/merge request.
+    
+    Example:
+        pr = PullRequest(
+            id="pr_repo_1",
+            number=42,
+            title="feat: Add authentication",
+            description="This PR adds OAuth support",
+            state="merged",
+            created_at="2026-01-10T14:30:00",
+            updated_at="2026-01-15T16:20:00",
+            merged_at="2026-01-15T16:20:00",
+            closed_at="2026-01-15T16:20:00",
+            commits_count=5,
+            additions=250,
+            deletions=30,
+            changed_files=8,
+            comments=3,
+            review_comments=12,
+            head_branch_name="feature/oauth",
+            base_branch_name="main",
+            labels=["enhancement", "security"],
+            mergeable_state="clean"
+        )
+        
+        # Relationships
+        created_by_rel = Relationship(
+            type="CREATED_BY",
+            from_id=pr.id,
+            to_id="person_alice",
+            from_type="PullRequest",
+            to_type="Person"
+        )
+        
+        reviewed_by_rel = Relationship(
+            type="REVIEWED_BY",
+            from_id=pr.id,
+            to_id="person_bob",
+            from_type="PullRequest",
+            to_type="Person",
+            properties={"state": "APPROVED"}
+        )
+    """
+    id: str
+    number: int
+    title: str
+    description: str
+    state: str  # "open", "merged", "closed"
+    created_at: str
+    updated_at: str
+    merged_at: Optional[str]  # Nullable - only for merged PRs
+    closed_at: Optional[str]  # Nullable - for merged or closed PRs
+    commits_count: int
+    additions: int
+    deletions: int
+    changed_files: int
+    comments: int
+    review_comments: int
+    head_branch_name: str
+    base_branch_name: str
+    labels: list  # List of label strings
+    mergeable_state: str
+    
+    def to_neo4j_properties(self) -> Dict[str, Any]:
+        """Convert to Neo4j properties."""
+        return asdict(self)
+
+
 # ============================================================================
 # RELATIONSHIP DATACLASS
 # ============================================================================
@@ -480,6 +550,14 @@ BIDIRECTIONAL_RELATIONSHIPS = {
     "AUTHORED_BY": "AUTHORED_BY",    # Commit ↔ Person
     "MODIFIES": "MODIFIED_BY",       # Commit → File (modifies) / File ← Commit (modified by) - with properties
     "REFERENCES": "REFERENCED_BY",   # Commit → Issue (references) / Issue ← Commit (referenced by)
+    
+    # Layer 8
+    "INCLUDES": "INCLUDED_IN",       # PullRequest → Commit (includes) / Commit ← PullRequest (included in)
+    "TARGETS": "TARGETED_BY",        # PullRequest → Branch (targets) / Branch ← PullRequest (targeted by)
+    "CREATED_BY": "CREATED",         # PullRequest → Person (created by) / Person ← PullRequest (created)
+    "REVIEWED_BY": "REVIEWED",       # PullRequest → Person (reviewed by) / Person ← PullRequest (reviewed) - with state property
+    "REQUESTED_REVIEWER": "REVIEW_REQUESTED_BY",  # PullRequest → Person / Person ← PullRequest
+    "MERGED_BY": "MERGED",           # PullRequest → Person (merged by) / Person ← PullRequest (merged)
 }
 
 
@@ -522,6 +600,9 @@ def create_constraints(session: Session, layers: Optional[List[int]] = None) -> 
             "CREATE CONSTRAINT commit_id IF NOT EXISTS FOR (c:Commit) REQUIRE c.id IS UNIQUE",
             "CREATE CONSTRAINT commit_sha IF NOT EXISTS FOR (c:Commit) REQUIRE c.sha IS UNIQUE",
             "CREATE CONSTRAINT file_id IF NOT EXISTS FOR (f:File) REQUIRE f.id IS UNIQUE"
+        ],
+        8: [
+            "CREATE CONSTRAINT pull_request_id IF NOT EXISTS FOR (pr:PullRequest) REQUIRE pr.id IS UNIQUE"
         ]
     }
     
@@ -931,6 +1012,54 @@ def merge_file(session: Session, file: File, relationships: Optional[List[Relati
         f.size = $size,
         f.created_at = datetime($created_at)
     RETURN f
+    """
+    
+    session.run(query, **props)
+    
+    # Create relationships if provided
+    if relationships:
+        for rel in relationships:
+            merge_relationship(session, rel)
+
+
+# ============================================================================
+# LAYER 8 MERGE FUNCTIONS
+# ============================================================================
+
+def merge_pull_request(session: Session, pull_request: PullRequest, relationships: Optional[List[Relationship]] = None) -> None:
+    """
+    Merge a PullRequest node into Neo4j.
+    
+    Args:
+        session: Neo4j session
+        pull_request: PullRequest dataclass instance
+        relationships: Optional list of relationships to create
+    """
+    props = pull_request.to_neo4j_properties()
+    
+    # MERGE the PullRequest node
+    # Handle nullable datetime fields
+    query = """
+    MERGE (pr:PullRequest {id: $id})
+    SET pr.number = $number,
+        pr.title = $title,
+        pr.description = $description,
+        pr.state = $state,
+        pr.created_at = datetime($created_at),
+        pr.updated_at = datetime($updated_at),
+        pr.merged_at = CASE WHEN $merged_at IS NOT NULL THEN datetime($merged_at) ELSE null END,
+        pr.closed_at = CASE WHEN $closed_at IS NOT NULL THEN datetime($closed_at) ELSE null END,
+        pr.commits_count = $commits_count,
+        pr.additions = $additions,
+        pr.deletions = $deletions,
+        pr.changed_files = $changed_files,
+        pr.comments = $comments,
+        pr.review_comments = $review_comments,
+        pr.head_branch_name = $head_branch_name,
+        pr.base_branch_name = $base_branch_name,
+        pr.labels = $labels,
+        pr.mergeable_state = $mergeable_state
+    RETURN pr
     """
     
     session.run(query, **props)

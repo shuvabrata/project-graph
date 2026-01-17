@@ -1,357 +1,299 @@
 """
-Layer 8: Load Pull Requests to Neo4j
-Loads PR nodes and relationships into Neo4j database.
+Load Pull Requests into Neo4j.
+This loads Layer 8 of the graph: PullRequest nodes with their relationships.
+
+Key differences from previous layers:
+- PullRequest nodes have nullable datetimes (merged_at, closed_at)
+- REVIEWED_BY relationships have properties (state: APPROVED/CHANGES_REQUESTED/COMMENTED)
+- Multiple relationship types connecting PRs to commits, branches, and people
+- Follows the same pattern: merge nodes one at a time, caller may/may not have relationships
 """
 
 import json
 import os
-from typing import Dict, Any
+import sys
+
+# Add parent directory to path to import shared models
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from neo4j import GraphDatabase
-
-# Neo4j connection details
-NEO4J_URI = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
-NEO4J_USER = os.getenv('NEO4J_USERNAME', 'neo4j')
-NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD', 'password')
-def load_data_file() -> Dict[str, Any]:
-    """Load the generated Layer 8 data."""
-    with open('../data/layer8_pull_requests.json', 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-def create_pull_request_nodes(session, pull_requests: list):
-    """Create PullRequest nodes in Neo4j."""
-    query = """
-    UNWIND $pull_requests as pr
-    CREATE (p:PullRequest {
-        id: pr.id,
-        number: pr.number,
-        title: pr.title,
-        description: pr.description,
-        state: pr.state,
-        created_at: datetime(pr.created_at),
-        updated_at: datetime(pr.updated_at),
-        merged_at: CASE WHEN pr.merged_at IS NOT NULL THEN datetime(pr.merged_at) ELSE null END,
-        closed_at: CASE WHEN pr.closed_at IS NOT NULL THEN datetime(pr.closed_at) ELSE null END,
-        commits_count: pr.commits_count,
-        additions: pr.additions,
-        deletions: pr.deletions,
-        changed_files: pr.changed_files,
-        comments: pr.comments,
-        review_comments: pr.review_comments,
-        head_branch_name: pr.head_branch_name,
-        base_branch_name: pr.base_branch_name,
-        labels: pr.labels,
-        mergeable_state: pr.mergeable_state
-    })
-    """
-    result = session.run(query, pull_requests=pull_requests)
-    return result.consume().counters.nodes_created
+from models import PullRequest, Relationship, merge_pull_request, merge_relationship, create_constraints
 
 
-def create_pr_relationships(session, relationships: list):
-    """Create all PR-related relationships in Neo4j (bidirectional)."""
-    
-    relationship_types = {
-        'INCLUDES': 0,
-        'TARGETS': 0,
-        'FROM': 0,
-        'CREATED_BY': 0,
-        'REVIEWED_BY': 0,
-        'REQUESTED_REVIEWER': 0,
-        'MERGED_BY': 0
-    }
-    
-    # Group relationships by type
-    rels_by_type = {}
-    for rel in relationships:
-        rel_type = rel['type']
-        if rel_type not in rels_by_type:
-            rels_by_type[rel_type] = []
-        rels_by_type[rel_type].append(rel)
-    
-    # INCLUDES: PullRequest → Commit (for merged PRs only, bidirectional)
-    if 'INCLUDES' in rels_by_type:
-        query = """
-        UNWIND $relationships as rel
-        MATCH (pr:PullRequest {id: rel.from_id})
-        MATCH (c:Commit {id: rel.to_id})
-        CREATE (pr)-[:INCLUDES]->(c)
-        CREATE (c)-[:INCLUDES]->(pr)
-        """
-        result = session.run(query, relationships=rels_by_type['INCLUDES'])
-        relationship_types['INCLUDES'] = result.consume().counters.relationships_created
-    
-    # TARGETS: PullRequest → Branch (base branch, bidirectional)
-    if 'TARGETS' in rels_by_type:
-        query = """
-        UNWIND $relationships as rel
-        MATCH (pr:PullRequest {id: rel.from_id})
-        MATCH (b:Branch {id: rel.to_id})
-        CREATE (pr)-[:TARGETS]->(b)
-        CREATE (b)-[:TARGETS]->(pr)
-        """
-        result = session.run(query, relationships=rels_by_type['TARGETS'])
-        relationship_types['TARGETS'] = result.consume().counters.relationships_created
-    
-    # FROM: PullRequest → Branch (head branch, bidirectional)
-    if 'FROM' in rels_by_type:
-        query = """
-        UNWIND $relationships as rel
-        MATCH (pr:PullRequest {id: rel.from_id})
-        MATCH (b:Branch {id: rel.to_id})
-        CREATE (pr)-[:FROM]->(b)
-        CREATE (b)-[:FROM]->(pr)
-        """
-        result = session.run(query, relationships=rels_by_type['FROM'])
-        relationship_types['FROM'] = result.consume().counters.relationships_created
-    
-    # CREATED_BY: PullRequest → Person (bidirectional)
-    if 'CREATED_BY' in rels_by_type:
-        query = """
-        UNWIND $relationships as rel
-        MATCH (pr:PullRequest {id: rel.from_id})
-        MATCH (p:Person {id: rel.to_id})
-        CREATE (pr)-[:CREATED_BY]->(p)
-        CREATE (p)-[:CREATED_BY]->(pr)
-        """
-        result = session.run(query, relationships=rels_by_type['CREATED_BY'])
-        relationship_types['CREATED_BY'] = result.consume().counters.relationships_created
-    
-    # REVIEWED_BY: PullRequest → Person (with state property, bidirectional)
-    if 'REVIEWED_BY' in rels_by_type:
-        query = """
-        UNWIND $relationships as rel
-        MATCH (pr:PullRequest {id: rel.from_id})
-        MATCH (p:Person {id: rel.to_id})
-        CREATE (pr)-[:REVIEWED_BY {state: rel.properties.state}]->(p)
-        CREATE (p)-[:REVIEWED_BY {state: rel.properties.state}]->(pr)
-        """
-        result = session.run(query, relationships=rels_by_type['REVIEWED_BY'])
-        relationship_types['REVIEWED_BY'] = result.consume().counters.relationships_created
-    
-    # REQUESTED_REVIEWER: PullRequest → Person (bidirectional)
-    if 'REQUESTED_REVIEWER' in rels_by_type:
-        query = """
-        UNWIND $relationships as rel
-        MATCH (pr:PullRequest {id: rel.from_id})
-        MATCH (p:Person {id: rel.to_id})
-        CREATE (pr)-[:REQUESTED_REVIEWER]->(p)
-        CREATE (p)-[:REQUESTED_REVIEWER]->(pr)
-        """
-        result = session.run(query, relationships=rels_by_type['REQUESTED_REVIEWER'])
-        relationship_types['REQUESTED_REVIEWER'] = result.consume().counters.relationships_created
-    
-    # MERGED_BY: PullRequest → Person (for merged PRs only, bidirectional)
-    if 'MERGED_BY' in rels_by_type:
-        query = """
-        UNWIND $relationships as rel
-        MATCH (pr:PullRequest {id: rel.from_id})
-        MATCH (p:Person {id: rel.to_id})
-        CREATE (pr)-[:MERGED_BY]->(p)
-        CREATE (p)-[:MERGED_BY]->(pr)
-        """
-        result = session.run(query, relationships=rels_by_type['MERGED_BY'])
-        relationship_types['MERGED_BY'] = result.consume().counters.relationships_created
-    
-    return relationship_types
-
-
-def run_validation_queries(session):
-    """Run validation queries to verify the data."""
-    print("\n" + "=" * 70)
-    print("VALIDATION QUERIES")
-    print("=" * 70)
-    
-    # 1. Total PRs by state
-    print("\n1. Pull Requests by State:")
-    result = session.run("""
-        MATCH (pr:PullRequest)
-        RETURN pr.state as state, count(pr) as count
-        ORDER BY count DESC
-    """)
-    for record in result:
-        print(f"   {record['state']}: {record['count']} PRs")
-    
-    # 2. PRs per repository
-    print("\n2. Pull Requests per Repository:")
-    result = session.run("""
-        MATCH (pr:PullRequest)-[:TARGETS]->(b:Branch)-[:BRANCH_OF]->(r:Repository)
-        RETURN r.name as repo, 
-               count(pr) as total_prs,
-               sum(CASE WHEN pr.state = 'merged' THEN 1 ELSE 0 END) as merged,
-               sum(CASE WHEN pr.state = 'open' THEN 1 ELSE 0 END) as open,
-               sum(CASE WHEN pr.state = 'closed' THEN 1 ELSE 0 END) as closed
-        ORDER BY total_prs DESC
-    """)
-    for record in result:
-        print(f"   {record['repo']}: {record['total_prs']} total "
-              f"(merged: {record['merged']}, open: {record['open']}, closed: {record['closed']})")
-    
-    # 3. Top PR creators
-    print("\n3. Top 10 PR Creators:")
-    result = session.run("""
-        MATCH (pr:PullRequest)-[:CREATED_BY]->(p:Person)
-        RETURN p.name as creator, p.title as title, count(pr) as pr_count
-        ORDER BY pr_count DESC
-        LIMIT 10
-    """)
-    for record in result:
-        print(f"   {record['creator']} ({record['title']}): {record['pr_count']} PRs")
-    
-    # 4. Top reviewers
-    print("\n4. Top 10 Reviewers:")
-    result = session.run("""
-        MATCH (pr:PullRequest)-[:REVIEWED_BY]->(p:Person)
-        RETURN p.name as reviewer, p.title as title, count(pr) as reviews
-        ORDER BY reviews DESC
-        LIMIT 10
-    """)
-    for record in result:
-        print(f"   {record['reviewer']} ({record['title']}): {record['reviews']} reviews")
-    
-    # 5. Average PR metrics
-    print("\n5. Average PR Metrics:")
-    result = session.run("""
-        MATCH (pr:PullRequest)
-        WHERE pr.state = 'merged'
-        RETURN avg(pr.commits_count) as avg_commits,
-               avg(pr.additions) as avg_additions,
-               avg(pr.deletions) as avg_deletions,
-               avg(pr.changed_files) as avg_files
-    """)
-    record = result.single()
-    print(f"   Average commits per PR: {record['avg_commits']:.1f}")
-    print(f"   Average additions per PR: {record['avg_additions']:.0f}")
-    print(f"   Average deletions per PR: {record['avg_deletions']:.0f}")
-    print(f"   Average files changed per PR: {record['avg_files']:.1f}")
-    
-    # 6. PR cycle time (merged PRs only)
-    print("\n6. PR Cycle Time (created to merged):")
-    result = session.run("""
-        MATCH (pr:PullRequest)
-        WHERE pr.state = 'merged'
-        WITH duration.between(pr.created_at, pr.merged_at).days as days
-        RETURN avg(days) as avg_days, min(days) as min_days, max(days) as max_days
-    """)
-    record = result.single()
-    print(f"   Average: {record['avg_days']:.1f} days")
-    print(f"   Min: {record['min_days']:.1f} days")
-    print(f"   Max: {record['max_days']:.1f} days")
-    
-    # 7. PRs with most commits
-    print("\n7. PRs with Most Commits (Top 5):")
-    result = session.run("""
-        MATCH (pr:PullRequest)-[:TARGETS]->(b:Branch)-[:BRANCH_OF]->(r:Repository)
-        RETURN pr.number as pr_num, pr.title as title, r.name as repo, pr.commits_count as commits
-        ORDER BY commits DESC
-        LIMIT 5
-    """)
-    for record in result:
-        print(f"   #{record['pr_num']} ({record['repo']}): {record['commits']} commits - {record['title']}")
-    
-    # 8. Review bottleneck analysis
-    print("\n8. Review Bottleneck Analysis (requested but not reviewed):")
-    result = session.run("""
-        MATCH (pr:PullRequest)-[:REQUESTED_REVIEWER]->(p:Person)
-        WHERE NOT (pr)-[:REVIEWED_BY]->(p)
-        WITH p.name as reviewer, count(pr) as pending_reviews
-        RETURN reviewer, pending_reviews
-        ORDER BY pending_reviews DESC
-        LIMIT 10
-    """)
-    count = 0
-    for record in result:
-        print(f"   {record['reviewer']}: {record['pending_reviews']} pending reviews")
-        count += 1
-    if count == 0:
-        print("   No pending reviews found")
-    
-    # 9. PRs with most code changes
-    print("\n9. PRs with Most Code Changes (Top 5):")
-    result = session.run("""
-        MATCH (pr:PullRequest)-[:TARGETS]->(b:Branch)-[:BRANCH_OF]->(r:Repository)
-        WITH pr, r, (pr.additions + pr.deletions) as total_changes
-        RETURN pr.number as pr_num, pr.title as title, r.name as repo, 
-               total_changes, pr.additions as adds, pr.deletions as dels
-        ORDER BY total_changes DESC
-        LIMIT 5
-    """)
-    for record in result:
-        print(f"   #{record['pr_num']} ({record['repo']}): {record['total_changes']} changes "
-              f"(+{record['adds']}/-{record['dels']}) - {record['title']}")
-    
-    # 10. Commits included in PRs (for merged PRs)
-    print("\n10. Commit Integration Statistics:")
-    result = session.run("""
-        MATCH (pr:PullRequest)-[:INCLUDES]->(c:Commit)
-        WITH count(DISTINCT pr) as prs_with_commits, count(c) as total_commits
-        RETURN prs_with_commits, total_commits, total_commits * 1.0 / prs_with_commits as avg_commits_per_pr
-    """)
-    record = result.single()
-    if record and record['prs_with_commits']:
-        print(f"   PRs with commits: {record['prs_with_commits']}")
-        print(f"   Total commits in PRs: {record['total_commits']}")
-        print(f"   Average commits per PR: {record['avg_commits_per_pr']:.1f}")
-    else:
-        print("   No commits linked to PRs found")
-
-
-def main():
-    print("=" * 70)
-    print("Layer 8: Pull Requests - Neo4j Loader")
-    print("=" * 70)
-    
-    # Load data
-    print("\n📂 Loading data from layer8_pull_requests.json...")
-    data = load_data_file()
-    
-    pull_requests = data['nodes']['pull_requests']
-    relationships = data['relationships']
-    
-    print(f"   • Pull Requests: {len(pull_requests)}")
-    print(f"   • Relationships: {len(relationships)}")
+def load_pull_requests_to_neo4j():
+    """Load PullRequest nodes into Neo4j."""
+    # Read the data file
+    data_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'layer8_pull_requests.json')
+    with open(data_path, 'r') as f:
+        data = json.load(f)
     
     # Connect to Neo4j
-    print(f"\n🔌 Connecting to Neo4j at {NEO4J_URI}...")
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    uri = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
+    user = os.getenv('NEO4J_USERNAME', 'neo4j')
+    password = os.getenv('NEO4J_PASSWORD', 'password')
+    
+    driver = GraphDatabase.driver(uri, auth=(user, password))
     
     try:
         with driver.session() as session:
-            # Clear existing Layer 8 data
-            print("\n🧹 Clearing existing Layer 8 data...")
-            session.run("MATCH (pr:PullRequest) DETACH DELETE pr")
-            print("   ✓ Cleared existing PullRequest nodes and relationships")
+            # Create constraints for Layer 8
+            create_constraints(session, layers=[8])
             
-            # Create constraints
-            print("\n📋 Creating constraints...")
-            session.run("CREATE CONSTRAINT pr_id IF NOT EXISTS FOR (pr:PullRequest) REQUIRE pr.id IS UNIQUE")
-            print("   ✓ Created PullRequest id constraint")
+            # Load pull requests one at a time
+            pull_requests = data['nodes']['pull_requests']
+            for pr_data in pull_requests:
+                # Create PullRequest object (no relationships embedded)
+                pull_request = PullRequest(
+                    id=pr_data['id'],
+                    number=pr_data['number'],
+                    title=pr_data['title'],
+                    description=pr_data['description'],
+                    state=pr_data['state'],
+                    created_at=pr_data['created_at'],
+                    updated_at=pr_data['updated_at'],
+                    merged_at=pr_data.get('merged_at'),  # Nullable
+                    closed_at=pr_data.get('closed_at'),  # Nullable
+                    commits_count=pr_data['commits_count'],
+                    additions=pr_data['additions'],
+                    deletions=pr_data['deletions'],
+                    changed_files=pr_data['changed_files'],
+                    comments=pr_data['comments'],
+                    review_comments=pr_data['review_comments'],
+                    head_branch_name=pr_data['head_branch_name'],
+                    base_branch_name=pr_data['base_branch_name'],
+                    labels=pr_data['labels'],
+                    mergeable_state=pr_data['mergeable_state']
+                )
+                
+                # Merge pull request (without relationships for now)
+                merge_pull_request(session, pull_request)
             
-            # Create nodes
-            print("\n💾 Creating PullRequest nodes...")
-            nodes_created = create_pull_request_nodes(session, pull_requests)
-            print(f"   ✓ Created {nodes_created} PullRequest nodes")
-            
-            # Create relationships
-            print("\n🔗 Creating relationships...")
-            rel_counts = create_pr_relationships(session, relationships)
-            for rel_type, count in rel_counts.items():
-                if count > 0:
-                    print(f"   ✓ Created {count} {rel_type} relationships")
-            
-            total_rels = sum(rel_counts.values())
-            print(f"\n   Total relationships created: {total_rels}")
-            
-            # Run validation
-            run_validation_queries(session)
-            
+            print(f"✓ Loaded {len(pull_requests)} pull requests")
+    
     finally:
         driver.close()
+
+
+def load_relationships():
+    """Load all Layer 8 relationships.
     
-    print("\n" + "=" * 70)
-    print("✅ Layer 8 data loaded successfully!")
-    print("=" * 70)
+    Relationships:
+    - INCLUDES: PullRequest → Commit (no properties, only for merged PRs)
+    - TARGETS: PullRequest → Branch (no properties, base branch)
+    - CREATED_BY: PullRequest → Person (no properties)
+    - REVIEWED_BY: PullRequest → Person (with state property)
+    - REQUESTED_REVIEWER: PullRequest → Person (no properties)
+    - MERGED_BY: PullRequest → Person (no properties, only for merged PRs)
+    """
+    # Read the data file
+    data_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'layer8_pull_requests.json')
+    with open(data_path, 'r') as f:
+        data = json.load(f)
+    
+    # Connect to Neo4j
+    uri = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
+    user = os.getenv('NEO4J_USERNAME', 'neo4j')
+    password = os.getenv('NEO4J_PASSWORD', 'password')
+    
+    driver = GraphDatabase.driver(uri, auth=(user, password))
+    
+    try:
+        with driver.session() as session:
+            # Group relationships by type for reporting
+            rel_counts = {}
+            
+            # Process relationships one at a time
+            for rel_data in data['relationships']:
+                rel_type = rel_data['type']
+                rel_counts[rel_type] = rel_counts.get(rel_type, 0) + 1
+                
+                # Create Relationship object (with properties if present)
+                relationship = Relationship(
+                    type=rel_data['type'],
+                    from_id=rel_data['from_id'],
+                    to_id=rel_data['to_id'],
+                    from_type=rel_data['from_type'],
+                    to_type=rel_data['to_type'],
+                    properties=rel_data.get('properties', {})
+                )
+                
+                # Merge relationship (handles bidirectional automatically)
+                merge_relationship(session, relationship)
+            
+            # Report relationship counts
+            print(f"✓ Loaded {len(data['relationships'])} relationships:")
+            for rel_type, count in sorted(rel_counts.items()):
+                print(f"  - {rel_type}: {count}")
+    
+    finally:
+        driver.close()
+
+
+def validate_layer8():
+    """Run validation queries to verify Layer 8 data."""
+    uri = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
+    user = os.getenv('NEO4J_USERNAME', 'neo4j')
+    password = os.getenv('NEO4J_PASSWORD', 'password')
+    
+    driver = GraphDatabase.driver(uri, auth=(user, password))
+    
+    try:
+        with driver.session() as session:
+            print("\n" + "=" * 60)
+            print("LAYER 8 VALIDATION")
+            print("=" * 60)
+            
+            # 1. PR counts by state
+            print("\n1. Pull Requests by State:")
+            result = session.run("""
+                MATCH (pr:PullRequest)
+                RETURN pr.state, count(pr) as count
+                ORDER BY count DESC
+            """)
+            total = 0
+            for record in result:
+                count = record['count']
+                total += count
+                print(f"   {record['pr.state']}: {count}")
+            print(f"   Total: {total}")
+            
+            # 2. PRs by repository (from id prefix)
+            print("\n2. Pull Requests by Repository:")
+            result = session.run("""
+                MATCH (pr:PullRequest)
+                WITH pr, split(pr.id, '_')[1] as repo
+                RETURN repo, count(pr) as pr_count
+                ORDER BY pr_count DESC
+            """)
+            for record in result:
+                print(f"   {record['repo']}: {record['pr_count']} PRs")
+            
+            # 3. Top PR creators
+            print("\n3. Top 10 PR Creators:")
+            result = session.run("""
+                MATCH (pr:PullRequest)-[:CREATED_BY]->(p:Person)
+                RETURN p.name, count(pr) as prs_created
+                ORDER BY prs_created DESC
+                LIMIT 10
+            """)
+            for record in result:
+                print(f"   {record['p.name']}: {record['prs_created']} PRs")
+            
+            # 4. Review statistics
+            print("\n4. Review Statistics:")
+            result = session.run("""
+                MATCH (pr:PullRequest)
+                OPTIONAL MATCH (pr)-[r:REVIEWED_BY]->(reviewer:Person)
+                WITH pr, count(DISTINCT reviewer) as reviewer_count,
+                     collect(DISTINCT r.state) as review_states
+                RETURN 
+                    count(pr) as total_prs,
+                    avg(reviewer_count) as avg_reviewers_per_pr,
+                    sum(CASE WHEN reviewer_count > 0 THEN 1 ELSE 0 END) as prs_with_reviews,
+                    sum(CASE WHEN 'APPROVED' IN review_states THEN 1 ELSE 0 END) as prs_with_approvals
+            """)
+            record = result.single()
+            total = record['total_prs']
+            with_reviews = record['prs_with_reviews']
+            with_approvals = record['prs_with_approvals']
+            avg_reviewers = record['avg_reviewers_per_pr']
+            print(f"   Total PRs: {total}")
+            print(f"   PRs with reviews: {with_reviews} ({with_reviews/total*100:.1f}%)")
+            print(f"   PRs with approvals: {with_approvals} ({with_approvals/total*100:.1f}%)")
+            print(f"   Avg reviewers per PR: {avg_reviewers:.1f}")
+            
+            # 5. Review states distribution
+            print("\n5. Review States Distribution:")
+            result = session.run("""
+                MATCH (pr:PullRequest)-[r:REVIEWED_BY]->(p:Person)
+                RETURN r.state as review_state, count(*) as count
+                ORDER BY count DESC
+            """)
+            for record in result:
+                print(f"   {record['review_state']}: {record['count']}")
+            
+            # 6. Merged PRs statistics
+            print("\n6. Merged PRs Statistics:")
+            result = session.run("""
+                MATCH (pr:PullRequest {state: 'merged'})
+                OPTIONAL MATCH (pr)-[:INCLUDES]->(c:Commit)
+                OPTIONAL MATCH (pr)-[:MERGED_BY]->(merger:Person)
+                WITH pr, count(DISTINCT c) as commit_count, merger
+                RETURN 
+                    count(pr) as merged_prs,
+                    avg(commit_count) as avg_commits_per_pr,
+                    sum(CASE WHEN merger IS NOT NULL THEN 1 ELSE 0 END) as with_merger
+            """)
+            record = result.single()
+            merged = record['merged_prs']
+            avg_commits = record['avg_commits_per_pr']
+            with_merger = record['with_merger']
+            print(f"   Merged PRs: {merged}")
+            print(f"   Avg commits per merged PR: {avg_commits:.1f}")
+            print(f"   PRs with MERGED_BY: {with_merger}")
+            
+            # 7. PR size distribution
+            print("\n7. PR Size Distribution:")
+            result = session.run("""
+                MATCH (pr:PullRequest)
+                WITH pr,
+                     CASE 
+                         WHEN pr.commits_count <= 3 THEN 'Small (1-3 commits)'
+                         WHEN pr.commits_count <= 8 THEN 'Medium (4-8 commits)'
+                         ELSE 'Large (9+ commits)'
+                     END as size_category
+                RETURN size_category, count(pr) as count
+                ORDER BY 
+                    CASE size_category
+                        WHEN 'Small (1-3 commits)' THEN 1
+                        WHEN 'Medium (4-8 commits)' THEN 2
+                        ELSE 3
+                    END
+            """)
+            for record in result:
+                print(f"   {record['size_category']}: {record['count']}")
+            
+            # 8. Verify bidirectional relationships
+            print("\n8. Bidirectional Relationship Verification:")
+            
+            # Check INCLUDES
+            result = session.run("""
+                MATCH (pr:PullRequest)-[:INCLUDES]->(c:Commit)
+                WHERE NOT exists((c)-[:INCLUDED_IN]->(pr))
+                RETURN count(*) as missing
+            """)
+            count = result.single()['missing']
+            if count == 0:
+                print("   ✓ INCLUDES ↔ INCLUDED_IN: All bidirectional")
+            else:
+                print(f"   ✗ INCLUDES ↔ INCLUDED_IN: {count} missing reverse")
+            
+            # Check REVIEWED_BY (with property matching)
+            result = session.run("""
+                MATCH (pr:PullRequest)-[r1:REVIEWED_BY]->(p:Person)
+                MATCH (p)-[r2:REVIEWED]->(pr)
+                WHERE r1.state <> r2.state
+                RETURN count(*) as mismatched
+            """)
+            count = result.single()['mismatched']
+            if count == 0:
+                print("   ✓ REVIEWED_BY ↔ REVIEWED: All properties match")
+            else:
+                print(f"   ✗ REVIEWED_BY ↔ REVIEWED: {count} property mismatches")
+            
+            print("\n" + "=" * 60)
+    
+    finally:
+        driver.close()
 
 
 if __name__ == "__main__":
-    main()
+    print("=" * 60)
+    print("Loading Layer 8: Pull Requests")
+    print("=" * 60)
+    
+    load_pull_requests_to_neo4j()
+    load_relationships()
+    validate_layer8()
+    
+    print("\n✓ Layer 8 loading complete!")

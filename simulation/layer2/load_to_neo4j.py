@@ -6,14 +6,10 @@ DOES NOT clear existing data - this is an incremental load.
 
 import json
 import os
-import sys
 import traceback
 
-# Add parent directory to path to import shared models
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
 from neo4j import GraphDatabase
-from models import (
+from db.models import (
     Project, Initiative, Relationship,
     merge_project, merge_initiative, merge_relationship,
     create_constraints

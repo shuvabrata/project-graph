@@ -10,13 +10,9 @@ Key differences from previous layers:
 
 import json
 import os
-import sys
-
-# Add parent directory to path to import shared models
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from neo4j import GraphDatabase
-from models import Repository, Relationship, merge_repository, merge_relationship, create_constraints
+from db.models import Repository, Relationship, merge_repository, merge_relationship, create_constraints
 
 
 def load_repositories_to_neo4j():

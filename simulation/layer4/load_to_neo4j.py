@@ -1,6 +1,6 @@
 """
 Layer 4 Neo4j Loader: Load Jira Stories, Bugs, Tasks & Sprints into Neo4j
-Loads Issue and Sprint nodes and creates relationships.
+Loads Issue and Sprint nodes and creates relationships to existing Epic, Person, and Sprint nodes.
 DOES NOT clear existing data - this is an incremental load.
 """
 
@@ -8,7 +8,16 @@ import json
 import os
 import sys
 import traceback
+
+# Add parent directory to path to import shared models
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from neo4j import GraphDatabase
+from models import (
+    Issue, Sprint, Relationship,
+    merge_issue, merge_sprint, merge_relationship,
+    create_constraints
+)
 
 class Layer4Loader:
     def __init__(self, uri: str, user: str, password: str):
@@ -22,21 +31,9 @@ class Layer4Loader:
     def create_constraints(self):
         """Create uniqueness constraints for node IDs."""
         with self.driver.session() as session:
-            constraints = [
-                "CREATE CONSTRAINT issue_id IF NOT EXISTS FOR (i:Issue) REQUIRE i.id IS UNIQUE",
-                "CREATE CONSTRAINT sprint_id IF NOT EXISTS FOR (s:Sprint) REQUIRE s.id IS UNIQUE"
-            ]
-            
             print("\nCreating constraints...")
-            for constraint in constraints:
-                try:
-                    session.run(constraint)
-                    print(f"   ✓ {constraint.split('(')[1].split(')')[0]}")
-                except Exception as e:
-                    if "already exists" in str(e):
-                        print(f"   - {constraint.split('(')[1].split(')')[0]} (already exists)")
-                    else:
-                        raise
+            create_constraints(session, layers=[4])
+            print("   ✓ Constraints created/verified")
     
     def verify_previous_layers(self):
         """Verify that Layers 1-3 data exists in the database."""
@@ -65,134 +62,107 @@ class Layer4Loader:
             print(f"   ✓ Layer 3: {epic_count} Epic nodes")
     
     def load_sprints(self, sprints: list):
-        """Load Sprint nodes into Neo4j."""
+        """Load Sprint nodes into Neo4j one at a time."""
         with self.driver.session() as session:
             print(f"\nLoading {len(sprints)} sprints...")
             
-            for sprint in sprints:
-                query = """
-                CREATE (s:Sprint {
-                    id: $id,
-                    name: $name,
-                    goal: $goal,
-                    start_date: date($start_date),
-                    end_date: date($end_date),
-                    status: $status
-                })
-                """
-                
-                result = session.run(query, **sprint)
-                summary = result.consume()
-                print(f"   ✓ Created {sprint['name']}")
+            for sprint_data in sprints:
+                sprint = Sprint(**sprint_data)
+                merge_sprint(session, sprint)
+                print(f"   ✓ Merged {sprint.name}")
     
     def load_issues(self, issues: list):
-        """Load Issue nodes into Neo4j."""
+        """Load Issue nodes into Neo4j one at a time."""
         with self.driver.session() as session:
             print(f"\nLoading {len(issues)} issues...")
             
             issue_counts = {"Story": 0, "Bug": 0, "Task": 0}
             
-            for issue in issues:
-                query = """
-                CREATE (i:Issue {
-                    id: $id,
-                    key: $key,
-                    type: $type,
-                    summary: $summary,
-                    description: $description,
-                    priority: $priority,
-                    status: $status,
-                    story_points: $story_points,
-                    created_at: date($created_at)
-                })
-                """
+            for issue_data in issues:
+                # Extract relationship IDs
+                epic_id = issue_data.pop('epic_id', None)
+                assignee_person_id = issue_data.pop('assignee_id', None)
+                reporter_person_id = issue_data.pop('reporter_id', None)
+                related_story_id = issue_data.pop('related_story_id', None)  # For bugs
                 
-                # Remove relationship IDs from params
-                params = {k: v for k, v in issue.items() 
-                         if k not in ['epic_id', 'assignee_id', 'reporter_id', 'related_story_id']}
+                issue = Issue(**issue_data)
                 
-                result = session.run(query, **params)
-                summary = result.consume()
-                issue_counts[issue['type']] += 1
+                # Create relationships directly to Epic, Person nodes
+                relationships = []
+                
+                if epic_id:
+                    relationships.append(Relationship(
+                        type="PART_OF",
+                        from_id=issue.id,
+                        to_id=epic_id,
+                        from_type="Issue",
+                        to_type="Epic"
+                    ))
+                
+                if assignee_person_id:
+                    relationships.append(Relationship(
+                        type="ASSIGNED_TO",
+                        from_id=issue.id,
+                        to_id=assignee_person_id,
+                        from_type="Issue",
+                        to_type="Person"
+                    ))
+                
+                if reporter_person_id:
+                    relationships.append(Relationship(
+                        type="REPORTED_BY",
+                        from_id=issue.id,
+                        to_id=reporter_person_id,
+                        from_type="Issue",
+                        to_type="Person"
+                    ))
+                
+                # Note: related_story_id handled via RELATES_TO in relationships array
+                
+                # Merge issue with relationships
+                merge_issue(session, issue, relationships=relationships)
+                issue_counts[issue.type] += 1
             
             print(f"   ✓ Stories: {issue_counts['Story']}")
             print(f"   ✓ Bugs: {issue_counts['Bug']}")
             print(f"   ✓ Tasks: {issue_counts['Task']}")
     
     def load_relationships(self, relationships: list):
-        """Load all relationships into Neo4j."""
+        """Load all relationships into Neo4j one at a time."""
         with self.driver.session() as session:
             print(f"\nLoading {len(relationships)} relationships...")
             
             # Group by relationship type for better reporting
             rel_counts = {}
+            skipped_count = 0
             
-            for rel in relationships:
-                rel_type = rel['type']
+            for rel_data in relationships:
+                rel_type = rel_data['type']
+                
+                # Skip relationships already handled in load_issues
+                if rel_type in ["PART_OF", "ASSIGNED_TO", "REPORTED_BY"]:
+                    skipped_count += 1
+                    continue
+                
                 if rel_type not in rel_counts:
                     rel_counts[rel_type] = 0
                 
-                # Create relationship based on type (with bidirectional relationships)
-                if rel_type == "PART_OF":
-                    query = """
-                    MATCH (i:Issue {id: $from_id})
-                    MATCH (e:Epic {id: $to_id})
-                    CREATE (i)-[:PART_OF]->(e)
-                    CREATE (e)-[:CONTAINS]->(i)
-                    """
-                elif rel_type == "ASSIGNED_TO":
-                    query = """
-                    MATCH (i:Issue {id: $from_id})
-                    MATCH (p:Person {id: $to_id})
-                    CREATE (i)-[:ASSIGNED_TO]->(p)
-                    CREATE (p)-[:ASSIGNED_TO]->(i)
-                    """
-                elif rel_type == "REPORTED_BY":
-                    query = """
-                    MATCH (i:Issue {id: $from_id})
-                    MATCH (p:Person {id: $to_id})
-                    CREATE (i)-[:REPORTED_BY]->(p)
-                    CREATE (p)-[:REPORTED_BY]->(i)
-                    """
-                elif rel_type == "IN_SPRINT":
-                    query = """
-                    MATCH (i:Issue {id: $from_id})
-                    MATCH (s:Sprint {id: $to_id})
-                    CREATE (i)-[:IN_SPRINT]->(s)
-                    CREATE (s)-[:CONTAINS]->(i)
-                    """
-                elif rel_type == "BLOCKS":
-                    query = """
-                    MATCH (i1:Issue {id: $from_id})
-                    MATCH (i2:Issue {id: $to_id})
-                    CREATE (i1)-[:BLOCKS]->(i2)
-                    CREATE (i2)-[:BLOCKED_BY]->(i1)
-                    """
-                elif rel_type == "DEPENDS_ON":
-                    query = """
-                    MATCH (i1:Issue {id: $from_id})
-                    MATCH (i2:Issue {id: $to_id})
-                    CREATE (i1)-[:DEPENDS_ON]->(i2)
-                    CREATE (i2)-[:DEPENDENCY_OF]->(i1)
-                    """
-                elif rel_type == "RELATES_TO":
-                    query = """
-                    MATCH (bug:Issue {id: $from_id})
-                    MATCH (story:Issue {id: $to_id})
-                    CREATE (bug)-[:RELATES_TO]->(story)
-                    CREATE (story)-[:RELATES_TO]->(bug)
-                    """
-                else:
-                    print(f"   ⚠️  Unknown relationship type: {rel_type}")
-                    continue
+                # Create Relationship object and merge
+                relationship = Relationship(**rel_data)
+                merge_relationship(session, relationship)
                 
-                result = session.run(query, from_id=rel['from_id'], to_id=rel['to_id'])
-                summary = result.consume()
-                rel_counts[rel_type] += summary.counters.relationships_created
+                # Count bidirectional relationships
+                if rel_type in ["IN_SPRINT", "BLOCKS", "DEPENDS_ON", "RELATES_TO"]:
+                    rel_counts[rel_type] = rel_counts.get(rel_type, 0) + 2
+                else:
+                    rel_counts[rel_type] = rel_counts.get(rel_type, 0) + 1
             
             # Report results
             for rel_type, count in rel_counts.items():
-                print(f"   ✓ {rel_type}: {count}")
+                print(f"   ✓ {rel_type}: {count} (includes bidirectional)")
+            
+            if skipped_count > 0:
+                print(f"   - Skipped {skipped_count} relationships (handled in load_issues)")
     
     def run_validation_queries(self):
         """Run validation queries from the simulation plan."""

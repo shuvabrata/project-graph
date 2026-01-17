@@ -185,6 +185,77 @@ class Epic:
         return asdict(self)
 
 
+@dataclass
+class Issue:
+    """Issue node representing a Jira work item (Story, Bug, or Task).
+    
+    Note: The 'epic_id', 'assignee_id', 'reporter_id', and 'related_story_id' fields
+    are NOT part of this dataclass. They should be extracted from JSON and used to
+    create relationships:
+    - PART_OF -> Epic
+    - ASSIGNED_TO -> Person
+    - REPORTED_BY -> Person
+    - RELATES_TO -> Issue (for bugs related to stories)
+    
+    Example:
+        issue = Issue(
+            id="issue_plat_1",
+            key="PLAT-1",
+            type="Story",
+            summary="Implement Kubernetes deployment",
+            ...
+        )
+        
+        # Relationships point directly to Epic, Person nodes
+        epic_rel = Relationship(
+            type="PART_OF",
+            from_id=issue.id,
+            to_id="epic_plat_1",
+            from_type="Issue",
+            to_type="Epic"
+        )
+    """
+    id: str
+    key: str
+    type: str         # "Story", "Bug", or "Task"
+    summary: str
+    description: str
+    priority: str
+    status: str
+    story_points: int
+    created_at: str   # ISO format string (YYYY-MM-DD)
+    
+    def to_neo4j_properties(self) -> Dict[str, Any]:
+        """Convert to Neo4j properties."""
+        return asdict(self)
+
+
+@dataclass
+class Sprint:
+    """Sprint node representing a time-boxed iteration.
+    
+    Example:
+        sprint = Sprint(
+            id="sprint_1",
+            name="Sprint 1",
+            goal="Platform infrastructure foundations",
+            start_date="2025-12-09",
+            end_date="2025-12-20",
+            status="Completed"
+        )
+    """
+    id: str
+    name: str
+    goal: str
+    start_date: str   # ISO format string (YYYY-MM-DD)
+    end_date: str     # ISO format string (YYYY-MM-DD)
+    status: str
+    
+    def to_neo4j_properties(self) -> Dict[str, Any]:
+        """Convert to Neo4j properties."""
+        return asdict(self)
+
+
 # ============================================================================
 # RELATIONSHIP DATACLASS
 # ============================================================================
@@ -220,6 +291,15 @@ BIDIRECTIONAL_RELATIONSHIPS = {
     # "PART_OF": "CONTAINS",        # Epic → Initiative / Initiative ← Epic (already defined in Layer 2)
     # "ASSIGNED_TO": "ASSIGNED_TO", # Epic ↔ Person (already defined in Layer 2)
     "TEAM": "TEAM",                 # Epic ↔ Team
+    
+    # Layer 4
+    # "PART_OF": "CONTAINS",        # Issue → Epic / Epic ← Issue (already defined in Layer 2)
+    # "ASSIGNED_TO": "ASSIGNED_TO", # Issue ↔ Person (already defined in Layer 2)
+    # "REPORTED_BY": "REPORTED_BY", # Issue ↔ Person (already defined in Layer 2)
+    "IN_SPRINT": "CONTAINS",        # Issue → Sprint / Sprint ← Issue
+    "BLOCKS": "BLOCKED_BY",         # Issue → Issue (blocks) / Issue ← Issue (blocked by)
+    "DEPENDS_ON": "DEPENDENCY_OF",  # Issue → Issue (depends on) / Issue ← Issue (dependency of)
+    "RELATES_TO": "RELATES_TO",     # Bug ↔ Story
 }
 
 
@@ -247,6 +327,10 @@ def create_constraints(session: Session, layers: Optional[List[int]] = None) -> 
         ],
         3: [
             "CREATE CONSTRAINT epic_id IF NOT EXISTS FOR (e:Epic) REQUIRE e.id IS UNIQUE"
+        ],
+        4: [
+            "CREATE CONSTRAINT issue_id IF NOT EXISTS FOR (i:Issue) REQUIRE i.id IS UNIQUE",
+            "CREATE CONSTRAINT sprint_id IF NOT EXISTS FOR (s:Sprint) REQUIRE s.id IS UNIQUE"
         ]
     }
     
@@ -453,6 +537,69 @@ def merge_epic(session: Session, epic: Epic, relationships: Optional[List[Relati
         e.due_date = date($due_date),
         e.created_at = date($created_at)
     RETURN e
+    """
+    
+    session.run(query, **props)
+    
+    # Create relationships if provided
+    if relationships:
+        for rel in relationships:
+            merge_relationship(session, rel)
+
+
+def merge_issue(session: Session, issue: Issue, relationships: Optional[List[Relationship]] = None) -> None:
+    """
+    Merge an Issue node into Neo4j.
+    
+    Args:
+        session: Neo4j session
+        issue: Issue dataclass instance
+        relationships: Optional list of relationships to create
+    """
+    props = issue.to_neo4j_properties()
+    
+    # MERGE the Issue node
+    query = """
+    MERGE (i:Issue {id: $id})
+    SET i.key = $key,
+        i.type = $type,
+        i.summary = $summary,
+        i.description = $description,
+        i.priority = $priority,
+        i.status = $status,
+        i.story_points = $story_points,
+        i.created_at = date($created_at)
+    RETURN i
+    """
+    
+    session.run(query, **props)
+    
+    # Create relationships if provided
+    if relationships:
+        for rel in relationships:
+            merge_relationship(session, rel)
+
+
+def merge_sprint(session: Session, sprint: Sprint, relationships: Optional[List[Relationship]] = None) -> None:
+    """
+    Merge a Sprint node into Neo4j.
+    
+    Args:
+        session: Neo4j session
+        sprint: Sprint dataclass instance
+        relationships: Optional list of relationships to create
+    """
+    props = sprint.to_neo4j_properties()
+    
+    # MERGE the Sprint node
+    query = """
+    MERGE (s:Sprint {id: $id})
+    SET s.name = $name,
+        s.goal = $goal,
+        s.start_date = date($start_date),
+        s.end_date = date($end_date),
+        s.status = $status
+    RETURN s
     """
     
     session.run(query, **props)

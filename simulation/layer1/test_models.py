@@ -4,7 +4,10 @@ Tests data classes and basic validation without connecting to Neo4j
 """
 
 import sys
-sys.path.insert(0, '.')
+import os
+
+# Add parent directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Mock neo4j Session to avoid import error
 from unittest.mock import MagicMock

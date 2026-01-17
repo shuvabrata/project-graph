@@ -1,147 +1,278 @@
 # Layer 2: Jira Initiatives
 
-This layer adds high-level business initiatives that represent strategic work for 2026.
+This layer adds high-level business initiatives (Jira-like work items) that connect to people through their Jira identities.
 
-## Overview
+## Files
 
-**Nodes Created:**
+- **`models.py`**: Convenience import from shared `../models.py`
+  - `Project`, `Initiative` dataclasses
+  - `merge_project()`, `merge_initiative()` - merge individual nodes
+  - `get_jira_identity_id()` - helper to convert person_id to Jira identity ID
+  
+- **`generate_data.py`**: Simulation data generator (creates JSON file)
+- **`load_to_neo4j.py`**: Incremental loader that reads JSON and loads into Neo4j
+
+## What This Layer Creates
+
+**Nodes:**
 - 1 Project node: "Engineering 2026"
 - 3 Initiative nodes representing major business objectives
 
-**Relationships Created:**
-- `PART_OF`: Initiative → Project (3 relationships)
-- `ASSIGNED_TO`: Initiative → Person (3 relationships - links to Senior/Staff engineers from Layer 1)
-- `REPORTED_BY`: Initiative → Person (3 relationships - links to PMs or Staff engineers from Layer 1)
+**Relationships:**
+- `PART_OF` ↔ `CONTAINS`: Initiative ↔ Project
+- `ASSIGNED_TO` ↔ `ASSIGNED_TO`: Initiative ↔ IdentityMapping (Jira)
+- `REPORTED_BY` ↔ `REPORTED_BY`: Initiative ↔ IdentityMapping (Jira)
 
-## Initiatives
+## Key Design: IdentityMapping vs Person
 
-| Key | Summary | Timeline | Priority |
-|-----|---------|----------|----------|
-| INIT-1 | Platform Modernization | Q1-Q2 2026 | High |
-| INIT-2 | Customer Portal Rebuild | Q1-Q3 2026 | Critical |
-| INIT-3 | Data Pipeline v2 | Q2-Q3 2026 | High |
+**Important**: Initiatives link to **IdentityMapping (Jira)**, not Person directly.
 
-## Usage
+```
+Initiative -[:ASSIGNED_TO]-> IdentityMapping(provider='Jira') -[:MAPS_TO]-> Person
+```
+
+**Why?** This matches real-world Jira data where:
+- Jira webhooks/APIs provide Jira account IDs
+- People may have multiple Jira accounts
+- Usernames can change without breaking relationships
+
+## Data Classes
+
+```python
+@dataclass
+class Project:
+    id: str
+    key: str
+    name: str
+    description: str
+    start_date: str  # ISO format (YYYY-MM-DD)
+    end_date: str
+    status: str
+
+@dataclass
+class Initiative:
+    id: str
+    key: str
+    summary: str
+    description: str
+    priority: str
+    status: str
+    start_date: str
+    due_date: str
+    created_at: str
+    # Note: assignee_id and reporter_id are extracted for relationships, not stored
+```
+
+## Usage Patterns
+
+### Pattern 1: Load Simulation Data
+
+```python
+from models import Initiative, Relationship, merge_initiative, get_jira_identity_id
+
+with open('../data/layer2_initiatives.json') as f:
+    data = json.load(f)
+
+with driver.session() as session:
+    for initiative_data in data['nodes']['initiatives']:
+        # Extract relationship metadata
+        assignee_person_id = initiative_data.pop('assignee_id')
+        reporter_person_id = initiative_data.pop('reporter_id')
+        
+        initiative = Initiative(**initiative_data)
+        
+        # Create relationships to Jira identities
+        relationships = []
+        if assignee_person_id:
+            jira_identity_id = get_jira_identity_id(assignee_person_id)
+            relationships.append(Relationship(
+                type="ASSIGNED_TO",
+                from_id=initiative.id,
+                to_id=jira_identity_id,
+                from_type="Initiative",
+                to_type="IdentityMapping"
+            ))
+        
+        merge_initiative(session, initiative, relationships=relationships)
+```
+
+### Pattern 2: Real-time Jira Webhook
+
+```python
+@app.post("/webhooks/jira/initiative")
+async def handle_jira_initiative(webhook: JiraWebhook):
+    """Process Jira initiative webhook."""
+    
+    with driver.session() as session:
+        # Look up Jira identity by Jira username
+        query = """
+        MATCH (i:IdentityMapping {provider: 'Jira', username: $jira_username})
+        RETURN i.id as identity_id
+        """
+        result = session.run(query, jira_username=webhook.assignee.account_id)
+        identity_id = result.single()['identity_id'] if result.peek() else None
+        
+        initiative = Initiative(
+            id=f"initiative_{webhook.key.lower().replace('-', '_')}",
+            key=webhook.key,
+            summary=webhook.summary,
+            ...
+        )
+        
+        relationships = []
+        if identity_id:
+            relationships.append(Relationship(
+                type="ASSIGNED_TO",
+                from_id=initiative.id,
+                to_id=identity_id,
+                from_type="Initiative",
+                to_type="IdentityMapping"
+            ))
+        
+        merge_initiative(session, initiative, relationships=relationships)
+```
+
+### Pattern 3: Incremental Updates
+
+```python
+# Create initiative first
+initiative = Initiative(...)
+merge_initiative(session, initiative)
+
+# Later: assign to someone
+assignee_rel = Relationship(
+    type="ASSIGNED_TO",
+    from_id=initiative.id,
+    to_id="identity_jira_person_alice",
+    from_type="Initiative",
+    to_type="IdentityMapping"
+)
+merge_relationship(session, assignee_rel)
+
+# Even later: link to project
+project_rel = Relationship(
+    type="PART_OF",
+    from_id=initiative.id,
+    to_id="project_q1_2026",
+    from_type="Initiative",
+    to_type="Project"
+)
+merge_relationship(session, project_rel)
+```
+
+## Running the Simulation
 
 ### Prerequisites
+Layer 1 must be loaded first (Person and IdentityMapping nodes must exist).
 
-Layer 1 must be loaded first! This layer references Person nodes from Layer 1.
-
-### Step 1: Generate the Data
-
+### Generate Data
 ```bash
 cd simulation/layer2
 python generate_data.py
 ```
 
-This creates `data/layer2_initiatives.json` with Project, Initiative nodes, and relationships to Layer 1 people.
-
-### Step 2: Load into Neo4j (Incremental)
-
+### Load into Neo4j
 ```bash
-cd simulation/layer2
+export NEO4J_URI=bolt://localhost:7687
+export NEO4J_USERNAME=neo4j
+export NEO4J_PASSWORD=your_password
+
 python load_to_neo4j.py
 ```
 
-**Note:** This is an **incremental load** - it does NOT clear existing data. It adds to Layer 1.
+The loader:
+1. Verifies Layer 1 data exists
+2. Creates Layer 2 constraints (Project, Initiative)
+3. Merges Project node
+4. Merges Initiative nodes with relationships to Jira IdentityMapping
+5. Creates PART_OF relationships
 
-### Step 3: Validate
+## Querying Examples
 
-The loader automatically runs validation queries. You can also explore in Neo4j Browser:
+### Find initiatives assigned to a person
 
 ```cypher
-// View all initiatives with assignees and reporters
-MATCH (i:Initiative)-[:ASSIGNED_TO]->(assignee:Person),
-      (i)-[:REPORTED_BY]->(reporter:Person)
-RETURN i.key, i.summary, 
-       assignee.name as assignee, assignee.title as assignee_title,
-       reporter.name as reporter, reporter.title as reporter_title,
-       i.status
+// Through the Jira identity
+MATCH (p:Person {name: 'Alice Johnson'})<-[:MAPS_TO]-(jira:IdentityMapping {provider: 'Jira'})
+      <-[:ASSIGNED_TO]-(i:Initiative)
+RETURN i.key, i.summary, i.status, i.priority
+ORDER BY i.due_date
+```
 
-// Show project hierarchy
-MATCH (p:Project)<-[:PART_OF]-(i:Initiative)
-RETURN p.name, collect(i.summary) as initiatives
+### All work for a person across tools
 
-// Initiative timeline
+```cypher
+MATCH (p:Person {name: 'Alice Johnson'})<-[:MAPS_TO]-(identity:IdentityMapping)
+OPTIONAL MATCH (identity)<-[:ASSIGNED_TO]-(initiative:Initiative)
+OPTIONAL MATCH (identity)<-[:AUTHORED_BY]-(commit:Commit)
+RETURN identity.provider,
+       collect(DISTINCT initiative.key) as initiatives,
+       count(DISTINCT commit) as commits
+```
+
+### Initiative timeline
+
+```cypher
 MATCH (i:Initiative)
-RETURN i.summary, i.start_date, i.due_date, i.priority
+RETURN i.key, i.summary, i.start_date, i.due_date, i.status
 ORDER BY i.start_date
 ```
 
-## Data Structure
+### Project breakdown
 
-### Project Node Properties
-```json
-{
-  "id": "project_engineering_2026",
-  "key": "ENG-2026",
-  "name": "Engineering 2026",
-  "description": "Engineering initiatives for 2026",
-  "start_date": "2026-01-01",
-  "end_date": "2026-12-31",
-  "status": "Active"
-}
+```cypher
+MATCH (proj:Project)<-[:PART_OF]-(i:Initiative)
+OPTIONAL MATCH (i)-[:ASSIGNED_TO]->(jira:IdentityMapping)-[:MAPS_TO]->(assignee:Person)
+RETURN proj.name,
+       collect({
+         key: i.key,
+         summary: i.summary,
+         assignee: assignee.name,
+         status: i.status
+       }) as initiatives
 ```
 
-### Initiative Node Properties
-```json
-{
-  "id": "initiative_init_1",
-  "key": "INIT-1",
-  "summary": "Platform Modernization",
-  "description": "Modernize infrastructure with Kubernetes...",
-  "priority": "High",
-  "status": "In Progress",
-  "start_date": "2026-01-01",
-  "due_date": "2026-06-30",
-  "created_at": "2025-12-01"
-}
+## Helper Functions
+
+### get_jira_identity_id()
+
+Converts a `person_id` (used in simulation data) to the corresponding Jira IdentityMapping ID:
+
+```python
+from models import get_jira_identity_id
+
+person_id = "person_john_doe"
+jira_id = get_jira_identity_id(person_id)
+# Returns: "identity_jira_person_john_doe"
 ```
 
-## Assignment Model
+This is needed because:
+- Simulation JSON uses `person_id` for convenience
+- But relationships must point to IdentityMapping nodes
+- This function performs the ID transformation
 
-**Assignees** (technical owners):
-- **Senior Software Engineers** (10 people from Layer 1)
-- **Staff Software Engineers** (5 people from Layer 1)
+## Architecture Notes
 
-**Reporters** (business stakeholders):
-- **Product Managers** (2 people from Layer 1)
-- **Staff Software Engineers** (5 people from Layer 1)
+### Shared Models
+All dataclasses and merge functions are in `../models.py` (shared across layers).
 
-This reflects realistic ownership where initiatives have both technical leads (assignees) and business stakeholders (reporters) tracking progress.
+Layer 2's `models.py` simply imports and re-exports for convenience.
 
-## Validation Checks
+### MERGE vs CREATE
+All operations use MERGE for idempotency:
+- Safe to re-run the loader
+- Updates existing nodes
+- Creates missing nodes automatically
 
-After loading, verify:
+### Bidirectional Relationships
+Relationships are automatically bidirectional:
+- `PART_OF` creates reverse `CONTAINS`
+- `ASSIGNED_TO` creates reverse `ASSIGNED_TO`
+- `REPORTED_BY` creates reverse `REPORTED_BY`
 
-1. **Project exists**: Exactly 1 Project node
-2. **Initiatives count**: Exactly 3 Initiative nodes
-3. **All initiatives have assignees**: Each Initiative has an ASSIGNED_TO relationship to a Person
-4. **All initiatives have reporters**: Each Initiative has a REPORTED_BY relationship to a Person
-5. **All initiatives part of project**: Each Initiative connected to Project via PART_OF
-6. **Layer 1 preserved**: All Person, Team, IdentityMapping nodes still exist
+## Next Layer
 
-## Next Steps
-
-Once Layer 2 is validated:
-
-1. ✅ Strategic initiatives are defined
-2. ➡️ Proceed to **Layer 3: Jira Epics** to break down initiatives into actionable epics
-
-## Troubleshooting
-
-**Issue**: "No Person nodes found"
-- Solution: Load Layer 1 first: `cd ../layer1 && python load_to_neo4j.py`
-
-**Issue**: Script can't find layer1 data file
-- Solution: Ensure `simulation/data/layer1_people_teams.json` exists
-
-**Issue**: Constraint already exists error
-- Solution: This is normal if you've loaded before - constraints persist
-
-## Files
-
-- `generate_data.py` - Generates initiative data referencing Layer 1 people
-- `load_to_neo4j.py` - Incrementally loads data into Neo4j
-- `README.md` - This file
-- `../data/layer2_initiatives.json` - Generated data file
+**Layer 3**: Jira Epics (children of Initiatives)
+- Epic nodes
+- CHILD_OF relationships to Initiatives
+- Continue building the Jira hierarchy

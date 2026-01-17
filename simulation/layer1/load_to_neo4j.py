@@ -8,6 +8,9 @@ import os
 import sys
 import traceback
 
+# Add parent directory to path to import shared models
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from neo4j import GraphDatabase
 from models import (
     Person, Team, IdentityMapping, Relationship,
@@ -35,7 +38,7 @@ class Layer1Loader:
         """Create uniqueness constraints for node IDs."""
         with self.driver.session() as session:
             print("\nCreating constraints...")
-            create_constraints(session)
+            create_constraints(session, layers=[1])
             print("   ✓ Constraints created/verified")
     
     def load_people(self, people: list):

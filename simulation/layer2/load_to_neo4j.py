@@ -1,6 +1,6 @@
 """
 Layer 2 Neo4j Loader: Load Jira Initiatives into Neo4j
-Loads Project and Initiative nodes and creates relationships to existing Person nodes.
+Loads Project and Initiative nodes and creates relationships to existing IdentityMapping nodes.
 DOES NOT clear existing data - this is an incremental load.
 """
 
@@ -8,7 +8,16 @@ import json
 import os
 import sys
 import traceback
+
+# Add parent directory to path to import shared models
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from neo4j import GraphDatabase
+from models import (
+    Project, Initiative, Relationship,
+    merge_project, merge_initiative, merge_relationship,
+    create_constraints, get_jira_identity_id
+)
 
 class Layer2Loader:
     def __init__(self, uri: str, user: str, password: str):
@@ -22,21 +31,9 @@ class Layer2Loader:
     def create_constraints(self):
         """Create uniqueness constraints for node IDs."""
         with self.driver.session() as session:
-            constraints = [
-                "CREATE CONSTRAINT project_id IF NOT EXISTS FOR (p:Project) REQUIRE p.id IS UNIQUE",
-                "CREATE CONSTRAINT initiative_id IF NOT EXISTS FOR (i:Initiative) REQUIRE i.id IS UNIQUE"
-            ]
-            
             print("\nCreating constraints...")
-            for constraint in constraints:
-                try:
-                    session.run(constraint)
-                    print(f"   ✓ {constraint.split('(')[1].split(')')[0]}")
-                except Exception as e:
-                    if "already exists" in str(e):
-                        print(f"   - {constraint.split('(')[1].split(')')[0]} (already exists)")
-                    else:
-                        raise
+            create_constraints(session, layers=[2])
+            print("   ✓ Constraints created/verified")
     
     def verify_layer1_data(self):
         """Verify that Layer 1 data exists in the database."""
@@ -57,101 +54,90 @@ class Layer2Loader:
             team_count = result.single()['count']
             print(f"   ✓ Found {team_count} Team nodes")
     
-    def load_project(self, project: dict):
+    def load_project(self, project_data: dict):
         """Load Project node into Neo4j."""
         with self.driver.session() as session:
-            print(f"\nLoading project: {project['name']}...")
+            print(f"\nLoading project: {project_data['name']}...")
             
-            query = """
-            CREATE (p:Project {
-                id: $id,
-                key: $key,
-                name: $name,
-                description: $description,
-                start_date: date($start_date),
-                end_date: date($end_date),
-                status: $status
-            })
-            """
+            project = Project(**project_data)
+            merge_project(session, project)
             
-            result = session.run(query, **project)
-            summary = result.consume()
-            print("   ✓ Created Project node")
+            print("   ✓ Merged Project node")
     
     def load_initiatives(self, initiatives: list):
-        """Load Initiative nodes into Neo4j."""
+        """Load Initiative nodes into Neo4j one at a time."""
         with self.driver.session() as session:
             print(f"\nLoading {len(initiatives)} initiatives...")
             
-            for initiative in initiatives:
-                query = """
-                CREATE (i:Initiative {
-                    id: $id,
-                    key: $key,
-                    summary: $summary,
-                    description: $description,
-                    priority: $priority,
-                    status: $status,
-                    start_date: date($start_date),
-                    due_date: date($due_date),
-                    created_at: date($created_at)
-                })
-                """
+            for initiative_data in initiatives:
+                # Extract assignee_id and reporter_id for relationships
+                assignee_person_id = initiative_data.pop('assignee_id', None)
+                reporter_person_id = initiative_data.pop('reporter_id', None)
                 
-                # Remove assignee_id and reporter_id from params as they're not properties
-                params = {k: v for k, v in initiative.items() 
-                         if k not in ['assignee_id', 'reporter_id']}
+                initiative = Initiative(**initiative_data)
                 
-                result = session.run(query, **params)
-                summary = result.consume()
-                print(f"   ✓ Created {initiative['key']}: {initiative['summary']}")
+                # Create relationships to Jira IdentityMapping nodes
+                relationships = []
+                
+                if assignee_person_id:
+                    # Convert person_id to Jira IdentityMapping id
+                    assignee_identity_id = get_jira_identity_id(assignee_person_id)
+                    relationships.append(Relationship(
+                        type="ASSIGNED_TO",
+                        from_id=initiative.id,
+                        to_id=assignee_identity_id,
+                        from_type="Initiative",
+                        to_type="IdentityMapping"
+                    ))
+                
+                if reporter_person_id:
+                    # Convert person_id to Jira IdentityMapping id
+                    reporter_identity_id = get_jira_identity_id(reporter_person_id)
+                    relationships.append(Relationship(
+                        type="REPORTED_BY",
+                        from_id=initiative.id,
+                        to_id=reporter_identity_id,
+                        from_type="Initiative",
+                        to_type="IdentityMapping"
+                    ))
+                
+                # Merge initiative with relationships
+                merge_initiative(session, initiative, relationships=relationships)
+                print(f"   ✓ Merged {initiative.key}: {initiative.summary}")
     
     def load_relationships(self, relationships: list):
-        """Load all relationships into Neo4j."""
+        """Load all relationships into Neo4j one at a time."""
         with self.driver.session() as session:
             print(f"\nLoading {len(relationships)} relationships...")
             
             # Group by relationship type for better reporting
             rel_counts = {}
+            skipped_count = 0
             
-            for rel in relationships:
-                rel_type = rel['type']
+            for rel_data in relationships:
+                rel_type = rel_data['type']
+                
+                # Skip ASSIGNED_TO and REPORTED_BY as they're handled in load_initiatives
+                if rel_type in ["ASSIGNED_TO", "REPORTED_BY"]:
+                    skipped_count += 1
+                    continue
+                
                 if rel_type not in rel_counts:
                     rel_counts[rel_type] = 0
                 
-                # Create relationship based on type (with bidirectional relationships)
-                if rel_type == "PART_OF":
-                    query = """
-                    MATCH (i:Initiative {id: $from_id})
-                    MATCH (p:Project {id: $to_id})
-                    CREATE (i)-[:PART_OF]->(p)
-                    CREATE (p)-[:CONTAINS]->(i)
-                    """
-                elif rel_type == "ASSIGNED_TO":
-                    query = """
-                    MATCH (i:Initiative {id: $from_id})
-                    MATCH (p:Person {id: $to_id})
-                    CREATE (i)-[:ASSIGNED_TO]->(p)
-                    CREATE (p)-[:ASSIGNED_TO]->(i)
-                    """
-                elif rel_type == "REPORTED_BY":
-                    query = """
-                    MATCH (i:Initiative {id: $from_id})
-                    MATCH (p:Person {id: $to_id})
-                    CREATE (i)-[:REPORTED_BY]->(p)
-                    CREATE (p)-[:REPORTED_BY]->(i)
-                    """
-                else:
-                    print(f"   ⚠️  Unknown relationship type: {rel_type}")
-                    continue
+                # Create Relationship object and merge
+                relationship = Relationship(**rel_data)
+                merge_relationship(session, relationship)
                 
-                result = session.run(query, from_id=rel['from_id'], to_id=rel['to_id'])
-                summary = result.consume()
-                rel_counts[rel_type] += summary.counters.relationships_created
+                # Count bidirectional relationships as 2
+                rel_counts[rel_type] = rel_counts.get(rel_type, 0) + 2
             
             # Report results
             for rel_type, count in rel_counts.items():
-                print(f"   ✓ {rel_type}: {count}")
+                print(f"   ✓ {rel_type}: {count} (includes bidirectional)")
+            
+            if skipped_count > 0:
+                print(f"   - Skipped {skipped_count} ASSIGNED_TO/REPORTED_BY relationships (handled separately)")
     
     def run_validation_queries(self):
         """Run validation queries from the simulation plan."""
@@ -160,11 +146,12 @@ class Layer2Loader:
         print("=" * 60)
         
         with self.driver.session() as session:
-            # Query 1: List all initiatives with assignees and reporters
+            # Query 1: List all initiatives with assignees and reporters (through IdentityMapping)
             print("\n1. Initiatives with assignees and reporters:")
             query1 = """
-            MATCH (i:Initiative)-[:ASSIGNED_TO]->(assignee:Person)
-            MATCH (i)-[:REPORTED_BY]->(reporter:Person)
+            MATCH (i:Initiative)-[:ASSIGNED_TO]->(assignee_identity:IdentityMapping)-[:MAPS_TO]->(assignee:Person)
+            MATCH (i)-[:REPORTED_BY]->(reporter_identity:IdentityMapping)-[:MAPS_TO]->(reporter:Person)
+            WHERE assignee_identity.provider = 'Jira' AND reporter_identity.provider = 'Jira'
             RETURN i.key, i.summary, assignee.name as assignee, reporter.name as reporter, i.status
             ORDER BY i.key
             """

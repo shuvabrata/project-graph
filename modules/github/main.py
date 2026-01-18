@@ -11,7 +11,10 @@ import os
 from pathlib import Path
 from github import Github
 from neo4j import GraphDatabase
-from db.models import Person, IdentityMapping, Relationship, merge_person, merge_identity_mapping
+from db.models import (
+    Person, Team, IdentityMapping, Relationship,
+    merge_person, merge_team, merge_identity_mapping, merge_relationship
+)
 
 
 def load_config():
@@ -118,6 +121,67 @@ def new_user_handler(session, collaborator):
         print(f"    Warning: Failed to create Person/IdentityMapping for {collaborator.login}: {str(e)}")
 
 
+def new_team_handler(session, team, repo_id, repo_created_at):
+    """Handle a new team by creating Team node and COLLABORATOR relationship to repository.
+    
+    Args:
+        session: Neo4j session
+        team: GitHub team object with attributes like name, slug, permission
+        repo_id: Repository ID to create relationship with
+        repo_created_at: Repository creation date for relationship timestamp
+    """
+    try:
+        # Extract available information from team
+        team_slug = team.slug
+        team_name = team.name
+        
+        # Map GitHub permission to general READ/WRITE
+        # GitHub team permissions: pull, push, admin, maintain, triage
+        permission_mapping = {
+            'pull': 'READ',
+            'triage': 'READ',
+            'push': 'WRITE',
+            'maintain': 'WRITE',
+            'admin': 'WRITE'
+        }
+        permission = permission_mapping.get(team.permission, 'READ')
+        
+        # Create Team node (prefix with team_github_ for global uniqueness)
+        team_id = f"team_github_{team_slug}"
+        team_node = Team(
+            id=team_id,
+            name=team_name,
+            focus_area="",  # GitHub API doesn't provide this
+            target_size=0,   # GitHub API doesn't provide this
+            created_at=repo_created_at  # Use repo creation as proxy
+        )
+        
+        # Create COLLABORATOR relationship from Team to Repository
+        relationship = Relationship(
+            type="COLLABORATOR",
+            from_id=team_id,
+            to_id=repo_id,
+            from_type="Team",
+            to_type="Repository",
+            properties={
+                "permission": permission,
+                "granted_at": repo_created_at
+            }
+        )
+        
+        # Merge into Neo4j (MERGE handles deduplication)
+        merge_team(session, team_node)
+        team_node.print_cli()
+        
+        merge_relationship(session, relationship)
+        relationship.print_cli()
+
+        #Todo: Add members of the team as Persons and link them to the Team?
+        
+    except Exception as e:
+        print(f"    Warning: Failed to create Team/COLLABORATOR for {team.slug}: {str(e)}")
+
+
 def extract_repo_info(repo, session):
     """Extract relevant repository information including collaborators and teams"""
     repo_info = {
@@ -146,14 +210,16 @@ def extract_repo_info(repo, session):
     # Fetch teams (only available for organization repositories)
     try:
         teams = repo.get_teams()
-        repo_info["teams"] = [
-            {
+        team_list = []
+        for team in teams:
+            # Create Team node and COLLABORATOR relationship
+            new_team_handler(session, team, repo_info["id"], repo_info["created_at"])
+            team_list.append({
                 "name": team.name,
                 "slug": team.slug,
                 "permission": team.permission
-            }
-            for team in teams
-        ]
+            })
+        repo_info["teams"] = team_list
     except Exception as e:
         # Teams might not be accessible for personal repos or due to permissions
         repo_info["teams_error"] = str(e)

@@ -28,6 +28,20 @@ class Person:
         """Convert to Neo4j properties with proper type conversion."""
         props = asdict(self)
         return props
+    
+    def print_cli(self) -> None:
+        """Print the Person object in an easy-to-read CLI format."""
+        print(f"\n{'='*60}")
+        print(f"PERSON: {self.name}")
+        print(f"{'='*60}")
+        print(f"  ID:         {self.id}")
+        print(f"  Email:      {self.email}")
+        print(f"  Title:      {self.title}")
+        print(f"  Role:       {self.role}")
+        print(f"  Seniority:  {self.seniority}")
+        print(f"  Hire Date:  {self.hire_date}")
+        print(f"  Is Manager: {self.is_manager}")
+        print(f"{'='*60}\n")
 
 
 @dataclass
@@ -42,6 +56,17 @@ class Team:
     def to_neo4j_properties(self) -> Dict[str, Any]:
         """Convert to Neo4j properties with proper type conversion."""
         return asdict(self)
+    
+    def print_cli(self) -> None:
+        """Print the Team object in an easy-to-read CLI format."""
+        print(f"\n{'='*60}")
+        print(f"TEAM: {self.name}")
+        print(f"{'='*60}")
+        print(f"  ID:          {self.id}")
+        print(f"  Focus Area:  {self.focus_area}")
+        print(f"  Target Size: {self.target_size}")
+        print(f"  Created At:  {self.created_at}")
+        print(f"{'='*60}\n")
 
 
 @dataclass
@@ -81,6 +106,17 @@ class IdentityMapping:
     def to_neo4j_properties(self) -> Dict[str, Any]:
         """Convert to Neo4j properties."""
         return asdict(self)
+    
+    def print_cli(self) -> None:
+        """Print the IdentityMapping object in an easy-to-read CLI format."""
+        print(f"\n{'='*60}")
+        print(f"IDENTITY MAPPING: {self.username}@{self.provider}")
+        print(f"{'='*60}")
+        print(f"  ID:       {self.id}")
+        print(f"  Provider: {self.provider}")
+        print(f"  Username: {self.username}")
+        print(f"  Email:    {self.email}")
+        print(f"{'='*60}\n")
 
 
 # ============================================================================
@@ -101,6 +137,19 @@ class Project:
     def to_neo4j_properties(self) -> Dict[str, Any]:
         """Convert to Neo4j properties."""
         return asdict(self)
+    
+    def print_cli(self) -> None:
+        """Print the Project object in an easy-to-read CLI format."""
+        print(f"\n{'='*60}")
+        print(f"PROJECT: {self.name}")
+        print(f"{'='*60}")
+        print(f"  ID:          {self.id}")
+        print(f"  Key:         {self.key}")
+        print(f"  Description: {self.description[:50]}..." if len(self.description) > 50 else f"  Description: {self.description}")
+        print(f"  Start Date:  {self.start_date}")
+        print(f"  End Date:    {self.end_date}")
+        print(f"  Status:      {self.status}")
+        print(f"{'='*60}\n")
 
 
 @dataclass
@@ -141,6 +190,21 @@ class Initiative:
     def to_neo4j_properties(self) -> Dict[str, Any]:
         """Convert to Neo4j properties."""
         return asdict(self)
+    
+    def print_cli(self) -> None:
+        """Print the Initiative object in an easy-to-read CLI format."""
+        print(f"\n{'='*60}")
+        print(f"INITIATIVE: {self.summary}")
+        print(f"{'='*60}")
+        print(f"  ID:          {self.id}")
+        print(f"  Key:         {self.key}")
+        print(f"  Description: {self.description[:50]}..." if len(self.description) > 50 else f"  Description: {self.description}")
+        print(f"  Priority:    {self.priority}")
+        print(f"  Status:      {self.status}")
+        print(f"  Start Date:  {self.start_date}")
+        print(f"  Due Date:    {self.due_date}")
+        print(f"  Created At:  {self.created_at}")
+        print(f"{'='*60}\n")
 
 
 @dataclass
@@ -183,6 +247,21 @@ class Epic:
     def to_neo4j_properties(self) -> Dict[str, Any]:
         """Convert to Neo4j properties."""
         return asdict(self)
+    
+    def print_cli(self) -> None:
+        """Print the Epic object in an easy-to-read CLI format."""
+        print(f"\n{'='*60}")
+        print(f"EPIC: {self.summary}")
+        print(f"{'='*60}")
+        print(f"  ID:          {self.id}")
+        print(f"  Key:         {self.key}")
+        print(f"  Description: {self.description[:50]}..." if len(self.description) > 50 else f"  Description: {self.description}")
+        print(f"  Priority:    {self.priority}")
+        print(f"  Status:      {self.status}")
+        print(f"  Start Date:  {self.start_date}")
+        print(f"  Due Date:    {self.due_date}")
+        print(f"  Created At:  {self.created_at}")
+        print(f"{'='*60}\n")
 
 
 @dataclass
@@ -228,6 +307,20 @@ class Issue:
     def to_neo4j_properties(self) -> Dict[str, Any]:
         """Convert to Neo4j properties."""
         return asdict(self)
+    
+    def print_cli(self) -> None:
+        """Print the Issue object in an easy-to-read CLI format."""
+        print(f"\n{'='*60}")
+        print(f"ISSUE [{self.type}]: {self.summary}")
+        print(f"{'='*60}")
+        print(f"  ID:            {self.id}")
+        print(f"  Key:           {self.key}")
+        print(f"  Description:   {self.description[:50]}..." if len(self.description) > 50 else f"  Description:   {self.description}")
+        print(f"  Priority:      {self.priority}")
+        print(f"  Status:        {self.status}")
+        print(f"  Story Points:  {self.story_points}")
+        print(f"  Created At:    {self.created_at}")
+        print(f"{'='*60}\n")
 
 
 @dataclass
@@ -254,6 +347,18 @@ class Sprint:
     def to_neo4j_properties(self) -> Dict[str, Any]:
         """Convert to Neo4j properties."""
         return asdict(self)
+    
+    def print_cli(self) -> None:
+        """Print the Sprint object in an easy-to-read CLI format."""
+        print(f"\n{'='*60}")
+        print(f"SPRINT: {self.name}")
+        print(f"{'='*60}")
+        print(f"  ID:         {self.id}")
+        print(f"  Goal:       {self.goal[:50]}..." if len(self.goal) > 50 else f"  Goal:       {self.goal}")
+        print(f"  Start Date: {self.start_date}")
+        print(f"  End Date:   {self.end_date}")
+        print(f"  Status:     {self.status}")
+        print(f"{'='*60}\n")
 
 
 @dataclass
@@ -299,6 +404,21 @@ class Repository:
     def to_neo4j_properties(self) -> Dict[str, Any]:
         """Convert to Neo4j properties."""
         return asdict(self)
+    
+    def print_cli(self) -> None:
+        """Print the Repository object in an easy-to-read CLI format."""
+        print(f"\n{'='*60}")
+        print(f"REPOSITORY: {self.full_name}")
+        print(f"{'='*60}")
+        print(f"  ID:          {self.id}")
+        print(f"  Name:        {self.name}")
+        print(f"  URL:         {self.url}")
+        print(f"  Language:    {self.language}")
+        print(f"  Is Private:  {self.is_private}")
+        print(f"  Description: {self.description[:50]}..." if len(self.description) > 50 else f"  Description: {self.description}")
+        print(f"  Topics:      {', '.join(self.topics) if self.topics else 'None'}")
+        print(f"  Created At:  {self.created_at}")
+        print(f"{'='*60}\n")
 
 
 @dataclass
@@ -338,6 +458,20 @@ class Branch:
     def to_neo4j_properties(self) -> Dict[str, Any]:
         """Convert to Neo4j properties."""
         return asdict(self)
+    
+    def print_cli(self) -> None:
+        """Print the Branch object in an easy-to-read CLI format."""
+        print(f"\n{'='*60}")
+        print(f"BRANCH: {self.name}")
+        print(f"{'='*60}")
+        print(f"  ID:                   {self.id}")
+        print(f"  Is Default:           {self.is_default}")
+        print(f"  Is Protected:         {self.is_protected}")
+        print(f"  Is Deleted:           {self.is_deleted}")
+        print(f"  Last Commit SHA:      {self.last_commit_sha[:10]}..." if len(self.last_commit_sha) > 10 else f"  Last Commit SHA:      {self.last_commit_sha}")
+        print(f"  Last Commit Time:     {self.last_commit_timestamp}")
+        print(f"  Created At:           {self.created_at}")
+        print(f"{'='*60}\n")
 
 
 @dataclass
@@ -392,6 +526,19 @@ class Commit:
     def to_neo4j_properties(self) -> Dict[str, Any]:
         """Convert to Neo4j properties."""
         return asdict(self)
+    
+    def print_cli(self) -> None:
+        """Print the Commit object in an easy-to-read CLI format."""
+        print(f"\n{'='*60}")
+        print(f"COMMIT: {self.message[:40]}..." if len(self.message) > 40 else f"COMMIT: {self.message}")
+        print(f"{'='*60}")
+        print(f"  ID:            {self.id}")
+        print(f"  SHA:           {self.sha[:10]}..." if len(self.sha) > 10 else f"  SHA:           {self.sha}")
+        print(f"  Timestamp:     {self.timestamp}")
+        print(f"  Additions:     {self.additions}")
+        print(f"  Deletions:     {self.deletions}")
+        print(f"  Files Changed: {self.files_changed}")
+        print(f"{'='*60}\n")
 
 
 @dataclass
@@ -422,6 +569,20 @@ class File:
     def to_neo4j_properties(self) -> Dict[str, Any]:
         """Convert to Neo4j properties."""
         return asdict(self)
+    
+    def print_cli(self) -> None:
+        """Print the File object in an easy-to-read CLI format."""
+        print(f"\n{'='*60}")
+        print(f"FILE: {self.name}")
+        print(f"{'='*60}")
+        print(f"  ID:         {self.id}")
+        print(f"  Path:       {self.path}")
+        print(f"  Extension:  {self.extension}")
+        print(f"  Language:   {self.language}")
+        print(f"  Is Test:    {self.is_test}")
+        print(f"  Size:       {self.size} bytes")
+        print(f"  Created At: {self.created_at}")
+        print(f"{'='*60}\n")
 
 
 @dataclass
@@ -492,6 +653,26 @@ class PullRequest:
     def to_neo4j_properties(self) -> Dict[str, Any]:
         """Convert to Neo4j properties."""
         return asdict(self)
+    
+    def print_cli(self) -> None:
+        """Print the PullRequest object in an easy-to-read CLI format."""
+        print(f"\n{'='*60}")
+        print(f"PULL REQUEST #{self.number}: {self.title}")
+        print(f"{'='*60}")
+        print(f"  ID:               {self.id}")
+        print(f"  State:            {self.state}")
+        print(f"  Description:      {self.description[:50]}..." if len(self.description) > 50 else f"  Description:      {self.description}")
+        print(f"  Created At:       {self.created_at}")
+        print(f"  Updated At:       {self.updated_at}")
+        print(f"  Merged At:        {self.merged_at or 'N/A'}")
+        print(f"  Closed At:        {self.closed_at or 'N/A'}")
+        print(f"  Branches:         {self.head_branch_name} → {self.base_branch_name}")
+        print(f"  Commits:          {self.commits_count}")
+        print(f"  Changes:          +{self.additions} -{self.deletions} ({self.changed_files} files)")
+        print(f"  Comments:         {self.comments} ({self.review_comments} in review)")
+        print(f"  Labels:           {', '.join(self.labels) if self.labels else 'None'}")
+        print(f"  Mergeable State:  {self.mergeable_state}")
+        print(f"{'='*60}\n")
 
 
 # ============================================================================
@@ -507,6 +688,19 @@ class Relationship:
     from_type: str
     to_type: str
     properties: Dict[str, Any] = field(default_factory=dict)
+    
+    def print_cli(self) -> None:
+        """Print the Relationship object in an easy-to-read CLI format."""
+        print(f"\n{'='*60}")
+        print(f"RELATIONSHIP: {self.type}")
+        print(f"{'='*60}")
+        print(f"  From: ({self.from_type}) {self.from_id}")
+        print(f"  To:   ({self.to_type}) {self.to_id}")
+        if self.properties:
+            print(f"  Properties:")
+            for key, value in self.properties.items():
+                print(f"    - {key}: {value}")
+        print(f"{'='*60}\n")
 
 
 # ============================================================================

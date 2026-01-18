@@ -1,6 +1,8 @@
 """
-Layer 1 Neo4j Loader: Load People & Teams data into Neo4j
-Reads the generated JSON and creates nodes and relationships in Neo4j.
+Layer 1 Neo4j Loader: Merge People & Teams data into Neo4j
+Reads the generated JSON and merges nodes and relationships in Neo4j.
+Uses MERGE operations - existing data is preserved.
+To clear the database first, run reset_db.py
 """
 import sys
 import json
@@ -22,13 +24,6 @@ class Layer1Loader:
     def close(self):
         """Close the driver connection."""
         self.driver.close()
-    
-    def clear_database(self):
-        """Clear all nodes and relationships (use with caution!)."""
-        with self.driver.session() as session:
-            print("⚠️  Clearing database...")
-            session.run("MATCH (n) DETACH DELETE n")
-            print("   ✓ Database cleared")
     
     def create_constraints(self):
         """Create uniqueness constraints for node IDs."""
@@ -191,7 +186,7 @@ def main():
     neo4j_password = os.getenv('NEO4J_PASSWORD', 'password')
     
     # Read data file
-    data_path = "simulation/data/layer1_people_teams.json"
+    data_path = "../data/layer1_people_teams.json"
     print(f"\nReading data from {data_path}...")
     
     try:
@@ -208,17 +203,6 @@ def main():
     loader = Layer1Loader(neo4j_uri, neo4j_user, neo4j_password)
     
     try:
-        # Ask for confirmation before clearing
-        print("\n⚠️  WARNING: This will delete all existing data in Neo4j!")
-        response = input("Do you want to continue? (yes/no): ")
-        
-        if response.lower() != 'yes':
-            print("Aborted.")
-            return
-        
-        # Clear database
-        loader.clear_database()
-        
         # Create constraints
         loader.create_constraints()
         
@@ -234,8 +218,10 @@ def main():
         loader.run_validation_queries()
         
         print("\n" + "=" * 60)
-        print("✓ Layer 1 loaded successfully!")
+        print("✓ Layer 1 data merged successfully!")
         print("=" * 60)
+        print("\nNote: Data was MERGED (not replaced).")
+        print("To clear the database first, run: python reset_db.py")
         print("\nYou can now:")
         print("1. Open Neo4j Browser at http://localhost:7474")
         print("2. Run queries to explore the data")

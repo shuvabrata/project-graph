@@ -254,40 +254,15 @@ def new_repo_handler(session, repo):
         return None, None
 
 
-def extract_repo_info(repo, session):
-    """Extract relevant repository information including collaborators and teams"""
+def process_repo(repo, session):
+    """Process repository: create repo node, collaborators, and teams in Neo4j."""
     # Step 1: Create Repository node FIRST
     repo_id, repo_created_at = new_repo_handler(session, repo)
     
-    # If repo creation failed, log and return minimal info
+    # If repo creation failed, skip collaborators/teams
     if repo_id is None:
         print(f"    Warning: Skipping collaborators/teams due to repo creation failure")
-        return {
-            "id": f"repo_{repo.name.replace('-', '_')}",
-            "name": repo.name,
-            "full_name": repo.full_name,
-            "url": repo.html_url,
-            "language": repo.language,
-            "is_private": repo.private,
-            "description": repo.description or "",
-            "topics": [],
-            "created_at": None,
-            "teams": [],
-            "error": "Repository creation failed"
-        }
-    
-    repo_info = {
-        "id": repo_id,
-        "name": repo.name,
-        "full_name": repo.full_name,
-        "url": repo.html_url,
-        "language": repo.language,
-        "is_private": repo.private,
-        "description": repo.description or "",
-        "topics": repo.get_topics(),
-        "created_at": repo_created_at,
-        "teams": []
-    }
+        raise Exception("Repository node creation failed")
     
     # Step 2: Process collaborators (creates Person, IdentityMapping, and COLLABORATOR relationships)
     try:
@@ -302,21 +277,12 @@ def extract_repo_info(repo, session):
     # Step 3: Fetch teams (only available for organization repositories)
     try:
         teams = repo.get_teams()
-        team_list = []
         for team in teams:
             # Create Team node and COLLABORATOR relationship
             new_team_handler(session, team, repo_id, repo_created_at)
-            team_list.append({
-                "name": team.name,
-                "slug": team.slug,
-                "permission": team.permission
-            })
-        repo_info["teams"] = team_list
     except Exception as e:
         # Teams might not be accessible for personal repos or due to permissions
-        repo_info["teams_error"] = str(e)
-
-    return repo_info
+        print(f"    Warning: Could not fetch teams - {str(e)}")
 
 
 def parse_repo_url(url):
@@ -366,35 +332,6 @@ def get_all_repos_for_owner(client, owner):
     return repos
 
 
-def print_repo_info(repo_info, indent=""):
-    """
-    Print repository information in a consistent format.
-    
-    Args:
-        repo_info: Dictionary containing repository information
-        indent: String to prepend to each line for indentation
-    """
-    print(f"{indent}ID:          {repo_info['id']}")
-    print(f"{indent}Name:        {repo_info['name']}")
-    print(f"{indent}Full Name:   {repo_info['full_name']}")
-    print(f"{indent}URL:         {repo_info['url']}")
-    print(f"{indent}Language:    {repo_info['language']}")
-    print(f"{indent}Private:     {repo_info['is_private']}")
-    print(f"{indent}Description: {repo_info['description']}")
-    print(f"{indent}Topics:      {', '.join(repo_info['topics']) if repo_info['topics'] else 'None'}")
-    print(f"{indent}Created:     {repo_info['created_at']}")
-    
-    # Print teams
-    if 'teams_error' in repo_info:
-        print(f"{indent}Teams:        Error fetching ({repo_info['teams_error']})")
-    else:
-        print(f"{indent}Teams:        {len(repo_info['teams'])}")
-        for team in repo_info['teams']:
-            print(f"{indent}  - {team['name']} (@{team['slug']}) [{team['permission']}]")
-    
-    print(f"{indent}✓ Successfully fetched")
-
-
 def main():
     """Main execution function"""
     print("GitHub Repository Information Fetcher")
@@ -417,7 +354,9 @@ def main():
         config = load_config()
         print(f"Loaded {len(config['repos'])} repositories from config\n")
         
-        repositories = []
+        # Counters for tracking
+        repos_processed = 0
+        repos_failed = 0
         
         # Create a session for the entire operation
         with driver.session() as session:
@@ -441,16 +380,14 @@ def main():
                         
                         for repo in repos:
                             try:
-                                # Extract information
-                                repo_info = extract_repo_info(repo, session)
-                                repositories.append(repo_info)
-                                
-                                # Print repository information
-                                print(f"\n  ↳ {repo_info['name']}")
-                                print_repo_info(repo_info, indent="    ")
+                                # Process repository (creates nodes and relationships)
+                                print(f"\n  ↳ {repo.name}")
+                                process_repo(repo, session)
+                                repos_processed += 1
                                 
                             except Exception as e:
                                 print(f"    ✗ Error processing {repo.name}: {str(e)}")
+                                repos_failed += 1
                                 continue
                                 
                     else:
@@ -459,19 +396,20 @@ def main():
                         owner, repo_name = parse_repo_url(repo_url)
                         repo = client.get_repo(f"{owner}/{repo_name}")
                         
-                        # Extract information
-                        repo_info = extract_repo_info(repo, session)
-                        repositories.append(repo_info)
-                        
-                        # Print repository information
-                        print_repo_info(repo_info)
+                        # Process repository (creates nodes and relationships)
+                        process_repo(repo, session)
+                        repos_processed += 1
                     
                 except Exception as e:
                     print(f"✗ Error: {str(e)}")
+                    repos_failed += 1
                     continue
         
         print("\n" + "=" * 50)
-        print(f"\nTotal repositories processed: {len(repositories)}/{len(config['repos'])}")
+        print("\nSummary:")
+        print(f"  ✓ Successfully processed: {repos_processed}")
+        print(f"  ✗ Failed: {repos_failed}")
+        print(f"  Total: {repos_processed + repos_failed}")
         
     finally:
         # Close Neo4j connection

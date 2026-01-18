@@ -12,8 +12,8 @@ from pathlib import Path
 from github import Github
 from neo4j import GraphDatabase
 from db.models import (
-    Person, Team, IdentityMapping, Relationship,
-    merge_person, merge_team, merge_identity_mapping, merge_relationship
+    Person, Team, Repository, IdentityMapping, Relationship,
+    merge_person, merge_team, merge_repository, merge_identity_mapping, merge_relationship
 )
 
 
@@ -64,13 +64,14 @@ def map_permissions_to_general(permissions):
     return "READ"
 
 
-def new_user_handler(session, collaborator):
-    """
-    Handle a new user collaborator by creating Person and IdentityMapping nodes.
+def new_user_handler(session, collaborator, repo_id, repo_created_at):
+    """Handle a new user collaborator by creating Person, IdentityMapping nodes and COLLABORATOR relationship.
     
     Args:
         session: Neo4j session
-        collaborator: GitHub collaborator object with attributes like login, name, email, type
+        collaborator: GitHub collaborator object with attributes like login, name, email, type, permissions
+        repo_id: Repository ID to create COLLABORATOR relationship with
+        repo_created_at: Repository creation date for relationship timestamp
     """
     try:
         # Extract available information from collaborator
@@ -101,7 +102,7 @@ def new_user_handler(session, collaborator):
         )
         
         # Create MAPS_TO relationship from IdentityMapping to Person
-        relationship = Relationship(
+        maps_to_relationship = Relationship(
             type="MAPS_TO",
             from_id=identity.id,
             to_id=person_id,
@@ -113,12 +114,44 @@ def new_user_handler(session, collaborator):
         merge_person(session, person)
         person.print_cli()
 
-        merge_identity_mapping(session, identity, relationships=[relationship])
+        merge_identity_mapping(session, identity, relationships=[maps_to_relationship])
         identity.print_cli()
-        relationship.print_cli()
+        maps_to_relationship.print_cli()
+        
+        # Extract permissions and map to general READ/WRITE
+        permission = map_permissions_to_general(collaborator.permissions.__dict__)
+        
+        # Determine role based on permissions
+        role = None
+        if collaborator.permissions.admin:
+            role = "admin"
+        elif collaborator.permissions.maintain:
+            role = "maintainer"
+        elif collaborator.permissions.push:
+            role = "contributor"
+        
+        # Create COLLABORATOR relationship from Person to Repository
+        collab_properties = {
+            "permission": permission,
+            "granted_at": repo_created_at
+        }
+        if role:
+            collab_properties["role"] = role
+        
+        collaborator_relationship = Relationship(
+            type="COLLABORATOR",
+            from_id=person_id,
+            to_id=repo_id,
+            from_type="Person",
+            to_type="Repository",
+            properties=collab_properties
+        )
+        
+        merge_relationship(session, collaborator_relationship)
+        collaborator_relationship.print_cli()
         
     except Exception as e:
-        print(f"    Warning: Failed to create Person/IdentityMapping for {collaborator.login}: {str(e)}")
+        print(f"    Warning: Failed to create Person/IdentityMapping/COLLABORATOR for {collaborator.login}: {str(e)}")
 
 
 def new_team_handler(session, team, repo_id, repo_created_at):
@@ -182,10 +215,69 @@ def new_team_handler(session, team, repo_id, repo_created_at):
         print(f"    Warning: Failed to create Team/COLLABORATOR for {team.slug}: {str(e)}")
 
 
+def new_repo_handler(session, repo):
+    """Handle a repository by creating Repository node in Neo4j.
+    
+    Args:
+        session: Neo4j session
+        repo: GitHub repository object
+        
+    Returns:
+        tuple: (repo_id, repo_created_at) or (None, None) if failed
+    """
+    try:
+        # Extract repository information
+        repo_id = f"repo_{repo.name.replace('-', '_')}"
+        repo_created_at = repo.created_at.strftime("%Y-%m-%d") if repo.created_at else None
+        
+        # Create Repository node
+        repository = Repository(
+            id=repo_id,
+            name=repo.name,
+            full_name=repo.full_name,
+            url=repo.html_url,
+            language=repo.language or "",
+            is_private=repo.private,
+            description=repo.description or "",
+            topics=repo.get_topics(),
+            created_at=repo_created_at
+        )
+        
+        # Merge into Neo4j
+        merge_repository(session, repository)
+        repository.print_cli()
+        
+        return repo_id, repo_created_at
+        
+    except Exception as e:
+        print(f"    ✗ Error: Failed to create Repository for {repo.name}: {str(e)}")
+        return None, None
+
+
 def extract_repo_info(repo, session):
     """Extract relevant repository information including collaborators and teams"""
+    # Step 1: Create Repository node FIRST
+    repo_id, repo_created_at = new_repo_handler(session, repo)
+    
+    # If repo creation failed, log and return minimal info
+    if repo_id is None:
+        print(f"    Warning: Skipping collaborators/teams due to repo creation failure")
+        return {
+            "id": f"repo_{repo.name.replace('-', '_')}",
+            "name": repo.name,
+            "full_name": repo.full_name,
+            "url": repo.html_url,
+            "language": repo.language,
+            "is_private": repo.private,
+            "description": repo.description or "",
+            "topics": [],
+            "created_at": None,
+            "teams": [],
+            "error": "Repository creation failed"
+        }
+    
     repo_info = {
-        "id": f"repo_{repo.name.replace('-', '_')}",
+        "id": repo_id,
         "name": repo.name,
         "full_name": repo.full_name,
         "url": repo.html_url,
@@ -193,27 +285,27 @@ def extract_repo_info(repo, session):
         "is_private": repo.private,
         "description": repo.description or "",
         "topics": repo.get_topics(),
-        "created_at": repo.created_at.strftime("%Y-%m-%d") if repo.created_at else None,
+        "created_at": repo_created_at,
         "teams": []
     }
     
-    # Process collaborators
+    # Step 2: Process collaborators (creates Person, IdentityMapping, and COLLABORATOR relationships)
     try:
         collaborators = repo.get_collaborators()
         for collab in collaborators:
             if collab.type == 'User':
-                new_user_handler(session, collab)
+                new_user_handler(session, collab, repo_id, repo_created_at)
     except Exception as e:
         # Collaborators might not be accessible for certain repos
-        print(f"Warning: Could not fetch collaborators - {str(e)}")
+        print(f"    Warning: Could not fetch collaborators - {str(e)}")
     
-    # Fetch teams (only available for organization repositories)
+    # Step 3: Fetch teams (only available for organization repositories)
     try:
         teams = repo.get_teams()
         team_list = []
         for team in teams:
             # Create Team node and COLLABORATOR relationship
-            new_team_handler(session, team, repo_info["id"], repo_info["created_at"])
+            new_team_handler(session, team, repo_id, repo_created_at)
             team_list.append({
                 "name": team.name,
                 "slug": team.slug,
@@ -223,7 +315,7 @@ def extract_repo_info(repo, session):
     except Exception as e:
         # Teams might not be accessible for personal repos or due to permissions
         repo_info["teams_error"] = str(e)
-    
+
     return repo_info
 
 

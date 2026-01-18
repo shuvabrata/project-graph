@@ -108,7 +108,11 @@ def new_user_handler(session, collaborator):
         
         # Merge into Neo4j (MERGE handles deduplication)
         merge_person(session, person)
+        person.print_cli()
+
         merge_identity_mapping(session, identity, relationships=[relationship])
+        identity.print_cli()
+        relationship.print_cli()
         
     except Exception as e:
         print(f"    Warning: Failed to create Person/IdentityMapping for {collaborator.login}: {str(e)}")

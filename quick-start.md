@@ -9,7 +9,7 @@ A Neo4j graph database project with a simple movie database example.
 
 ## Quick Start
 
-### 1. Configure Environment Variables
+### 1. Configure Environment Variables 
 
 Copy the example environment file and update it with your credentials:
 

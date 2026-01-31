@@ -50,6 +50,11 @@ Login with the credentials you set in your `.env` file:
 - **Password**: Value from `NEO4J_PASSWORD`
 
 ### 4. Install Python Dependencies
+Optionally create python venv
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
 
 ```bash
 pip install -r requirements.txt

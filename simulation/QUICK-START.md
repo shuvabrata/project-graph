@@ -139,7 +139,7 @@ python load_to_neo4j.py
 To reload all data from scratch, use the provided script:
 
 ```bash
-./reload_all.sh
+./reload_all_simulations.sh
 ```
 
 This script will clear the database (via Layer 1) and reload all 8 layers sequentially.

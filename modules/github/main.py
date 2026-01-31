@@ -12,9 +12,9 @@ from pathlib import Path
 from github import Github
 from neo4j import GraphDatabase
 from db.models import (
-    Person, Team, Repository, IdentityMapping, Relationship,
+    Person, Team, Repository, IdentityMapping, Relationship, Branch,
     merge_person, merge_team, merge_repository, merge_identity_mapping, merge_relationship,
-    create_constraints
+    merge_branch, create_constraints
 )
 
 
@@ -216,6 +216,95 @@ def new_team_handler(session, team, repo_id, repo_created_at):
         print(f"    Warning: Failed to create Team/COLLABORATOR for {team.slug}: {str(e)}")
 
 
+def get_branch_created_at(repo, branch_name):
+    """Get the creation timestamp of a branch using the first commit on that branch.
+    
+    Args:
+        repo: GitHub repository object
+        branch_name: Name of the branch
+        
+    Returns:
+        str: ISO format datetime string of the first commit, or None if not found
+    """
+    try:
+        # Get commits on this branch
+        commits = repo.get_commits(sha=branch_name)
+        
+        # Get the first (oldest) commit by going through all commits
+        # Note: GitHub API returns commits in reverse chronological order
+        first_commit = None
+        for commit in commits:
+            first_commit = commit
+        
+        if first_commit and first_commit.commit.author.date:
+            return first_commit.commit.author.date.isoformat()
+        
+        return None
+    except Exception as e:
+        print(f"        Warning: Could not determine branch creation time - {str(e)}")
+        return None
+
+
+def new_branch_handler(session, repo, branch, repo_id):
+    """Handle a branch by creating Branch node and BRANCH_OF relationship.
+    
+    Args:
+        session: Neo4j session
+        repo: GitHub repository object (for fetching commit history)
+        branch: GitHub branch object
+        repo_id: Repository ID to create relationship with
+    """
+    try:
+        # Get branch properties
+        branch_name = branch.name
+        is_default = (branch_name == repo.default_branch)
+        is_protected = branch.protected
+        
+        # Get last commit info
+        last_commit = branch.commit
+        last_commit_sha = last_commit.sha
+        last_commit_timestamp = last_commit.commit.author.date.isoformat() if last_commit.commit.author.date else None
+        
+        # Get branch creation timestamp (first commit on this branch)
+        created_at = get_branch_created_at(repo, branch_name)
+        
+        # If we couldn't get created_at, use last_commit_timestamp as fallback
+        if not created_at:
+            created_at = last_commit_timestamp
+        
+        # Create Branch node
+        branch_id = f"branch_{repo.name}_{branch_name.replace('/', '_').replace('-', '_')}"
+        branch_node = Branch(
+            id=branch_id,
+            name=branch_name,
+            is_default=is_default,
+            is_protected=is_protected,
+            is_deleted=False,  # Only tracking existing branches for now
+            last_commit_sha=last_commit_sha,
+            last_commit_timestamp=last_commit_timestamp,
+            created_at=created_at
+        )
+        
+        # Create BRANCH_OF relationship
+        relationship = Relationship(
+            type="BRANCH_OF",
+            from_id=branch_id,
+            to_id=repo_id,
+            from_type="Branch",
+            to_type="Repository"
+        )
+        
+        # Merge into Neo4j
+        merge_branch(session, branch_node)
+        branch_node.print_cli()
+        
+        merge_relationship(session, relationship)
+        relationship.print_cli()
+        
+    except Exception as e:
+        print(f"    Warning: Failed to create Branch for {branch.name}: {str(e)}")
+
+
 def new_repo_handler(session, repo):
     """Handle a repository by creating Repository node in Neo4j.
     
@@ -256,7 +345,7 @@ def new_repo_handler(session, repo):
 
 
 def process_repo(repo, session):
-    """Process repository: create repo node, collaborators, and teams in Neo4j."""
+    """Process repository: create repo node, collaborators, teams, and branches in Neo4j."""
     # Step 1: Create Repository node FIRST
     repo_id, repo_created_at = new_repo_handler(session, repo)
     
@@ -284,6 +373,14 @@ def process_repo(repo, session):
     except Exception as e:
         # Teams might not be accessible for personal repos or due to permissions
         print(f"    Warning: Could not fetch teams - {str(e)}")
+    
+    # Step 4: Process branches (creates Branch nodes and BRANCH_OF relationships)
+    try:
+        branches = repo.get_branches()
+        for branch in branches:
+            new_branch_handler(session, repo, branch, repo_id)
+    except Exception as e:
+        print(f"    Warning: Could not fetch branches - {str(e)}")
 
 
 def parse_repo_url(url):
@@ -351,10 +448,10 @@ def main():
         driver.verify_connectivity()
         print("✓ Neo4j connection established\n")
         
-        # Create constraints for layers 1 (Person, Team, IdentityMapping) and 5 (Repository)
+        # Create constraints for layers 1 (Person, Team, IdentityMapping), 5 (Repository), and 6 (Branch)
         print("Creating database constraints...")
         with driver.session() as session:
-            create_constraints(session, layers=[1, 5])
+            create_constraints(session, layers=[1, 5, 6])
         print("✓ Constraints created\n")
         
         # Load configuration

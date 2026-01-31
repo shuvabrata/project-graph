@@ -13,7 +13,8 @@ from github import Github
 from neo4j import GraphDatabase
 from db.models import (
     Person, Team, Repository, IdentityMapping, Relationship,
-    merge_person, merge_team, merge_repository, merge_identity_mapping, merge_relationship
+    merge_person, merge_team, merge_repository, merge_identity_mapping, merge_relationship,
+    create_constraints
 )
 
 
@@ -349,6 +350,12 @@ def main():
         # Verify connection
         driver.verify_connectivity()
         print("✓ Neo4j connection established\n")
+        
+        # Create constraints for layers 1 (Person, Team, IdentityMapping) and 5 (Repository)
+        print("Creating database constraints...")
+        with driver.session() as session:
+            create_constraints(session, layers=[1, 5])
+        print("✓ Constraints created\n")
         
         # Load configuration
         config = load_config()
